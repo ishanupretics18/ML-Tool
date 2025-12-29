@@ -63,7 +63,7 @@ if file is None:
     st.stop()
 
 df = pd.read_csv(file)
-predict_only = st.sidebar.checkbox("Predict missing targets only", value=False)
+predict_only = st.sidebar.toggle("Predict missing targets only", value=False)
 st.dataframe(df.head())
 
 model_container = st.sidebar.container()
