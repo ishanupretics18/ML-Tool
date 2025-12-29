@@ -98,11 +98,12 @@ with model_container:
 
 
 # Drop rows where target is NaN (REQUIRED for sklearn)
-mask = y.notna()
-X = X.loc[mask]
-y = y.loc[mask]
+train_mask = y.notna()
 
+X_train_all = X.loc[train_mask]
+y_train_all = y.loc[train_mask]
 
+X_to_predict = X.loc[~train_mask]
 
 
 # ------------------ Preprocessing ------------------
@@ -163,8 +164,15 @@ pipeline = Pipeline([
 
 # ------------------ Train ------------------
 if st.button("Train Model"):
-    pipeline.fit(X_train, y_train)
+    pipeline.fit(X_train_all, y_train_all)
+
     preds = pipeline.predict(X_test)
+
+    # predict rows where target was blank
+    if len(X_to_predict) > 0:
+        future_preds = pipeline.predict(X_to_predict)
+    else:
+        future_preds = None
 
     col1, col2 = st.columns([1, 2])
 
@@ -217,9 +225,17 @@ if st.button("Train Model"):
 
     st.success(f"Model saved: {model_path}")
 
+    # test predictions
     out = X_test.copy()
     out["y_true"] = y_test.values
     out["y_pred"] = preds
+
+    # append predictions for missing targets
+    if future_preds is not None:
+        future = X_to_predict.copy()
+        future["y_true"] = None
+        future["y_pred"] = future_preds
+        out = pd.concat([out, future], axis=0)
     st.download_button(
         "Download Predictions CSV",
         out.to_csv(index=False),
