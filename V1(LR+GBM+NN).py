@@ -63,7 +63,7 @@ if file is None:
     st.stop()
 
 df = pd.read_csv(file)
-st.subheader("Data Preview")
+predict_only = st.sidebar.checkbox("Predict missing targets only", value=False)
 st.dataframe(df.head())
 
 model_container = st.sidebar.container()
@@ -81,7 +81,19 @@ if len(features) == 0:
 
 X = df[features]
 y = df[target]
-is_binary = y.nunique() == 2
+
+# Drop rows where target is NaN (REQUIRED for sklearn)
+# split rows based on missing target
+train_mask = y.notna()
+
+X_train_all = X.loc[train_mask]
+y_train_all = y.loc[train_mask]
+
+X_to_predict = X.loc[~train_mask]
+
+# Detect type only from training rows
+is_binary = y_train_all.nunique() == 2
+
 # ------------------ Model Selection ------------------
 with model_container:
     if is_binary:
@@ -94,17 +106,6 @@ with model_container:
             "Model",
             ["Linear Regression", "GBM", "Neural Network"]
         )
-
-
-
-# Drop rows where target is NaN (REQUIRED for sklearn)
-train_mask = y.notna()
-
-X_train_all = X.loc[train_mask]
-y_train_all = y.loc[train_mask]
-
-X_to_predict = X.loc[~train_mask]
-
 
 # ------------------ Preprocessing ------------------
 num_cols = X.select_dtypes(include=np.number).columns.tolist()
@@ -130,7 +131,7 @@ preprocessor = ColumnTransformer([
 # ------------------ Train/Test ------------------
 test_size = st.sidebar.slider("Test size (%)", 10, 40, 20)
 X_train, X_test, y_train, y_test = train_test_split(
-    X, y, test_size=test_size/100, random_state=42
+    X_train_all, y_train_all, test_size=test_size/100, random_state=42
 )
 
 # ------------------ Model Init ------------------
@@ -166,13 +167,13 @@ pipeline = Pipeline([
 if st.button("Train Model"):
     pipeline.fit(X_train_all, y_train_all)
 
+    # evaluation predictions
     preds = pipeline.predict(X_test)
 
-    # predict rows where target was blank
+    # predict missing targets
+    future_preds = None
     if len(X_to_predict) > 0:
         future_preds = pipeline.predict(X_to_predict)
-    else:
-        future_preds = None
 
     col1, col2 = st.columns([1, 2])
 
@@ -226,16 +227,23 @@ if st.button("Train Model"):
     st.success(f"Model saved: {model_path}")
 
     # test predictions
+    # test part (trained rows)
     out = X_test.copy()
     out["y_true"] = y_test.values
     out["y_pred"] = preds
+    out["Row_Type"] = "train"
 
-    # append predictions for missing targets
+    # prediction-only rows
     if future_preds is not None:
         future = X_to_predict.copy()
         future["y_true"] = None
         future["y_pred"] = future_preds
+        future["Row_Type"] = "predict"
+
         out = pd.concat([out, future], axis=0)
+
+    if predict_only:
+        out = out[out["Row_Type"] == "predict"]
     st.download_button(
         "Download Predictions CSV",
         out.to_csv(index=False),
