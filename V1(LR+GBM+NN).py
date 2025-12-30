@@ -193,7 +193,7 @@ if st.button("Train Model"):
 
     if is_binary:
 
-        if not hasattr(pipeline, "predict_proba"):
+        if not hasattr(pipeline.named_steps["model"], "predict_proba"):
             st.warning("This model does not support probability scores.")
             proba = None
         else:
@@ -222,9 +222,17 @@ if st.button("Train Model"):
             else:
                 pass
         cm = confusion_matrix(y_test, preds)
+
         with col2:
             st.subheader("Confusion Matrix")
-            st.dataframe(pd.DataFrame(cm))
+
+            cm_df = pd.DataFrame(
+                cm,
+                index=["Actual 0", "Actual 1"],
+                columns=["Predicted 0", "Predicted 1"]
+            )
+
+            st.dataframe(cm_df)
 
     else:
         mse = mean_squared_error(y_test, preds)
@@ -270,28 +278,43 @@ if st.button("Train Model"):
             ax.set_ylabel("Residuals (Actual - Predicted)")
             st.pyplot(fig, use_container_width=True)
 
-            # ======================================
-            # FEATURE IMPORTANCE (GBM ONLY)
-            # ======================================
-            if model_choice == "GBM":
+    # ======================================
+    # FEATURE IMPORTANCE (GBM – regression + classification)
+    # ======================================
+    if model_choice == "GBM":
+        try:
+            model_step = pipeline.named_steps["model"]
+
+            if hasattr(model_step, "feature_importances_"):
+                st.subheader("Feature Importance (GBM)")
+
+                importances = model_step.feature_importances_
+
+                # -----------------------------
+                # map feature names correctly
+                # -----------------------------
                 try:
-                    model_step = pipeline.named_steps["model"]
+                    feature_names = preprocessor.get_feature_names_out()
+                except:
+                    feature_names = [f"Feature_{i}" for i in range(len(importances))]
 
-                    if hasattr(model_step, "feature_importances_"):
-                        st.subheader("Feature Importance (GBM)")
+                # sort by importance
+                idx = np.argsort(importances)[::-1]
+                sorted_names = np.array(feature_names)[idx]
+                sorted_vals = importances[idx]
 
-                        importances = model_step.feature_importances_
+                fig_imp, ax_imp = plt.subplots()
+                ax_imp.barh(sorted_names, sorted_vals)
+                ax_imp.invert_yaxis()
+                ax_imp.set_title("GBM Feature Importance")
+                st.pyplot(fig_imp)
 
-                        fig_imp, ax_imp = plt.subplots()
-                        ax_imp.bar(range(len(importances)), importances)
-                        ax_imp.set_title("GBM Feature Importance")
-                        st.pyplot(fig_imp)
+            else:
+                st.info("This GBM version does not expose feature importances.")
 
-                    else:
-                        st.info("This GBM version does not expose feature importances.")
+        except Exception as e:
+            st.info(f"Feature importance unavailable: {e}")
 
-                except Exception as e:
-                    st.info(f"Feature importance unavailable: {e}")
     # ------------------ Save Outputs ------------------
     os.makedirs("models", exist_ok=True)
     model_path = f"models/{model_choice.replace(' ','_')}.joblib"
