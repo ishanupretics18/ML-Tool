@@ -130,6 +130,10 @@ preprocessor = ColumnTransformer([
 
 # ------------------ Train/Test ------------------
 test_size = st.sidebar.slider("Test size (%)", 10, 40, 20)
+handle_imbalance = st.sidebar.toggle(
+    "Handle class imbalance (recommended for rare classes)",
+    value=True
+)
 X_train, X_test, y_train, y_test = train_test_split(
     X_train_all, y_train_all, test_size=test_size/100, random_state=42
 )
@@ -139,17 +143,27 @@ if model_choice == "Linear Regression":
     model = Ridge()
 
 elif model_choice == "Logistic Regression":
-    model = LogisticRegression(max_iter=500)
+    model = LogisticRegression(
+        max_iter=500,
+        class_weight="balanced" if handle_imbalance else None
+    )
+
 
 elif model_choice == "GBM":
     if HAS_LGB:
         model = lgb.LGBMClassifier() if is_binary else lgb.LGBMRegressor()
     else:
-        model = (
-            HistGradientBoostingClassifier()
-            if is_binary else
-            HistGradientBoostingRegressor()
-        )
+        if is_binary:
+            try:
+                model = HistGradientBoostingClassifier(
+                    class_weight="balanced" if handle_imbalance else None
+                )
+            except:
+                model = HistGradientBoostingClassifier()
+        else:
+            model = HistGradientBoostingRegressor()
+
+
 
 else:  # Neural Network
     model = (
@@ -165,7 +179,7 @@ pipeline = Pipeline([
 
 # ------------------ Train ------------------
 if st.button("Train Model"):
-    pipeline.fit(X_train_all, y_train_all)
+    pipeline.fit(X_train, y_train)
 
     # evaluation predictions
     preds = pipeline.predict(X_test)
@@ -178,7 +192,13 @@ if st.button("Train Model"):
     col1, col2 = st.columns([1, 2])
 
     if is_binary:
-        proba = pipeline.predict_proba(X_test)[:, 1]
+
+        if not hasattr(pipeline, "predict_proba"):
+            st.warning("This model does not support probability scores.")
+            proba = None
+        else:
+            proba = pipeline.predict_proba(X_test)[:, 1]
+
         metrics = {
             "Accuracy": accuracy_score(y_test, preds),
             "Precision": precision_score(y_test, preds, zero_division=0),
@@ -189,6 +209,18 @@ if st.button("Train Model"):
         with col1:
             st.subheader("Metrics")
             st.json(metrics)
+
+            st.subheader("Model Summary")
+
+            if is_binary:
+                if metrics["Recall"] < 0.6:
+                    st.warning("Low recall — model is missing many positives. Be careful.")
+                elif metrics["ROC AUC"] < 0.7:
+                    st.info("Model is weak. Consider adding more features or data.")
+                else:
+                    st.success("Model looks solid and usable.")
+            else:
+                pass
         cm = confusion_matrix(y_test, preds)
         with col2:
             st.subheader("Confusion Matrix")
@@ -205,7 +237,26 @@ if st.button("Train Model"):
             st.subheader("Metrics")
             st.json(metrics)
 
-    if not is_binary:
+            st.subheader("Model Summary")
+
+            if metrics["R2"] < 0.4:
+                st.warning("Very weak model — predictions are unreliable.")
+            elif metrics["R2"] < 0.7:
+                st.info("Okay model — usable but improve if possible.")
+            else:
+                st.success("Strong model — predictions are quite reliable.")
+
+            st.subheader("🔎 Model Health Check")
+
+            r2 = metrics["R2"]
+
+            if r2 < 0.4:
+                st.error("❗Low explanatory power — model is not explaining the data well.")
+            elif r2 < 0.7:
+                st.warning("⚠️ Medium strength — good for trends, not precise forecasts.")
+            else:
+                st.success("💡 Strong model — explains most of the variation.")
+
         st.markdown("---")
 
         left, center, right = st.columns([1, 3, 1])
@@ -219,6 +270,28 @@ if st.button("Train Model"):
             ax.set_ylabel("Residuals (Actual - Predicted)")
             st.pyplot(fig, use_container_width=True)
 
+            # ======================================
+            # FEATURE IMPORTANCE (GBM ONLY)
+            # ======================================
+            if model_choice == "GBM":
+                try:
+                    model_step = pipeline.named_steps["model"]
+
+                    if hasattr(model_step, "feature_importances_"):
+                        st.subheader("Feature Importance (GBM)")
+
+                        importances = model_step.feature_importances_
+
+                        fig_imp, ax_imp = plt.subplots()
+                        ax_imp.bar(range(len(importances)), importances)
+                        ax_imp.set_title("GBM Feature Importance")
+                        st.pyplot(fig_imp)
+
+                    else:
+                        st.info("This GBM version does not expose feature importances.")
+
+                except Exception as e:
+                    st.info(f"Feature importance unavailable: {e}")
     # ------------------ Save Outputs ------------------
     os.makedirs("models", exist_ok=True)
     model_path = f"models/{model_choice.replace(' ','_')}.joblib"
