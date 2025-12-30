@@ -289,7 +289,7 @@ if st.button("Train Model"):
        with col1:
            st.subheader("Metrics")
            st.json(metrics)
-
+           st.info(f"Applied decision threshold: {round(float(effective_threshold), 3)}")
 
            # ---------- AUC WARNING ----------
            auc_value = metrics["ROC AUC"]
@@ -299,23 +299,37 @@ if st.button("Train Model"):
                    "Consider adding features, cleaning data, or trying another model."
                )
 
-
            # ---------- ROC CURVE ----------
            from sklearn.metrics import roc_curve
 
-
-           fpr, tpr, _ = roc_curve(y_bin, proba)
+           fpr, tpr, roc_th = roc_curve(y_bin, proba)
 
            fig_roc, ax_roc = plt.subplots()
-           ax_roc.plot(fpr, tpr)
-           ax_roc.plot([0, 1], [0, 1], linestyle="--")
+
+           # ROC curve
+           ax_roc.plot(fpr, tpr, label="ROC Curve")
+           ax_roc.plot([0, 1], [0, 1], linestyle="--", color="gray", label="Chance")
+
+           # 🔥 SHOW THRESHOLD POINT
+           # find point closest to chosen effective threshold
+           import numpy as np
+
+           idx = (np.abs(roc_th - effective_threshold)).argmin()
+
+           ax_roc.scatter(
+               fpr[idx],
+               tpr[idx],
+               color="red",
+               s=80,
+               label=f"Threshold = {round(float(effective_threshold), 3)}"
+           )
+
            ax_roc.set_title("ROC Curve")
            ax_roc.set_xlabel("False Positive Rate")
            ax_roc.set_ylabel("True Positive Rate")
-
+           ax_roc.legend()
 
            st.pyplot(fig_roc)
-
 
            st.subheader("Model Summary")
 
@@ -329,21 +343,21 @@ if st.button("Train Model"):
                    st.success("Model looks solid and usable.")
            else:
                pass
-       cm = confusion_matrix(y_test, preds)
+       # recover original class names in correct order
+       labels = list(y_test.unique())  # [neg, pos]
 
+       # confusion matrix still works on 0/1…
+       cm = confusion_matrix(y_bin, preds, labels=[0, 1])
 
-       with col2:
-           st.subheader("Confusion Matrix")
+       # …but we DISPLAY with real labels
+       cm_df = pd.DataFrame(
+           cm,
+           index=[f"Actual: {labels[0]}", f"Actual: {labels[1]}"],
+           columns=[f"Pred: {labels[0]}", f"Pred: {labels[1]}"]
+       )
 
-
-           cm_df = pd.DataFrame(
-               cm,
-               index=["Actual 0", "Actual 1"],
-               columns=["Predicted 0", "Predicted 1"]
-           )
-
-
-           st.dataframe(cm_df)
+       st.subheader("Confusion Matrix")
+       st.dataframe(cm_df)
 
 
    else:
@@ -460,7 +474,8 @@ if st.button("Train Model"):
    out["Row_Type"] = "train"
    if is_binary and hasattr(pipeline.named_steps["model"], "predict_proba"):
        out["y_proba"] = pipeline.predict_proba(X_test)[:, 1]
-       out["Low_Confidence"] = (abs(out["y_proba"] - effective_threshold) < 0.10)
+       out["Low_Confidence"] = (abs(out["y_proba"] - effective_threshold) <= 0.10)
+
 
    # prediction-only rows
    if future_preds is not None:
