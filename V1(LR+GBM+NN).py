@@ -237,15 +237,13 @@ if st.button("Train Model"):
        else:
            precisions, recalls, ths = precision_recall_curve(y_test, proba)
 
-       if threshold_mode == "Optimize for Recall":
+           if threshold_mode == "Optimize for Recall":
                idx = recalls.argmax()
                best_threshold = ths[idx]
-
 
            elif threshold_mode == "Optimize for Precision":
                idx = precisions.argmax()
                best_threshold = ths[idx]
-
 
            else:  # Optimize F1
                f1_scores = 2 * (precisions * recalls) / (precisions + recalls + 1e-9)
@@ -254,11 +252,10 @@ if st.button("Train Model"):
 
            st.info(f"Using optimized threshold: {round(float(best_threshold), 3)}")
 
-           # --- FINAL DECISION THRESHOLD ---
-           effective_threshold = float(best_threshold)
+       effective_threshold = float(best_threshold)
 
-           # FINAL PREDICTIONS
-           preds = (proba >= effective_threshold).astype(int)
+   # FINAL PREDICTIONS
+       preds = (proba >= effective_threshold).astype(int)
 
    # predict missing targets
    future_preds = None
