@@ -225,9 +225,11 @@ if st.button("Train Model"):
    # default predictions (used for regression)
    preds = pipeline.predict(X_test)
 
-   # evaluation predictions
    # override class decisions based on threshold
    if is_binary and hasattr(pipeline.named_steps["model"], "predict_proba"):
+       # ensure binary labels become 0/1
+       y_bin = (y_test == y_test.unique()[1]).astype(int)
+
        proba = pipeline.predict_proba(X_test)[:, 1]
        from sklearn.metrics import precision_recall_curve
 
@@ -235,7 +237,7 @@ if st.button("Train Model"):
            best_threshold = threshold
 
        else:
-           precisions, recalls, ths = precision_recall_curve(y_test, proba)
+           precisions, recalls, ths = precision_recall_curve(y_bin, proba)
 
            if threshold_mode == "Optimize for Recall":
                idx = recalls.argmax()
@@ -276,11 +278,11 @@ if st.button("Train Model"):
            proba = pipeline.predict_proba(X_test)[:, 1]
 
        metrics = {
-           "Accuracy": accuracy_score(y_test, preds),
-           "Precision": precision_score(y_test, preds, zero_division=0),
-           "Recall": recall_score(y_test, preds, zero_division=0),
-           "F1": f1_score(y_test, preds, zero_division=0),
-           "ROC AUC": roc_auc_score(y_test, proba),
+           "Accuracy": accuracy_score(y_bin, preds),
+           "Precision": precision_score(y_bin, preds, zero_division=0),
+           "Recall": recall_score(y_bin, preds, zero_division=0),
+           "F1": f1_score(y_bin, preds, zero_division=0),
+           "ROC AUC": roc_auc_score(y_bin, proba),
            "Effective Threshold": round(float(effective_threshold), 3)
        }
 
@@ -302,7 +304,7 @@ if st.button("Train Model"):
            from sklearn.metrics import roc_curve
 
 
-           fpr, tpr, _ = roc_curve(y_test, proba)
+           fpr, tpr, _ = roc_curve(y_bin, proba)
 
            fig_roc, ax_roc = plt.subplots()
            ax_roc.plot(fpr, tpr)
