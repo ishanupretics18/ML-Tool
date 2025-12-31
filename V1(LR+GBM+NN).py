@@ -138,7 +138,6 @@ preprocessor = ColumnTransformer([
 
 # ------------------ Train/Test ------------------
 test_size = st.sidebar.slider("Test size (%)", 10, 40, 20)
-suggest_drops = st.sidebar.toggle("Suggest features to drop", value=False)
 
 # ------------------ Automated Imbalance Handling (Visualized) ------------------
 if is_binary:
@@ -483,18 +482,18 @@ if st.button("Train Model"):
             fi = fi.sort_values(by="Importance", ascending=True)
 
             # -------------------------------------------------
-            # Suggest features to drop (only if toggle enabled)
+            # AUTO-SUGGEST features to drop
             # -------------------------------------------------
-            if suggest_drops:
-                weak = fi[fi["Importance"] <= 0]
+            weak = fi[fi["Importance"] <= 0]
 
-                if len(weak) > 0:
-                    st.warning(
-                        "These features may be hurting the model — consider removing them:\n\n"
-                        + ", ".join(list(weak["Feature"]))
-                    )
-                else:
-                    st.success("No harmful features detected 🎯")
+            if len(weak) > 0:
+                st.warning(
+                    "⚠️ **Optimization Tip:** These features seem to be hurting accuracy (Importance ≤ 0).\n"
+                    "Consider removing them to improve the model:\n\n"
+                    f"**{', '.join(list(weak['Feature']))}**"
+                )
+            else:
+                st.success("✅ All features are contributing positively! No drops needed.")
 
             fig_perm, ax_perm = plt.subplots(figsize=(10, 6))
             colors = ["#4caf50" if v > 0 else "#e53935" for v in fi["Importance"]]
