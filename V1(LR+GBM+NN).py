@@ -29,7 +29,7 @@ try:
     import lightgbm as lgb
 
     HAS_LGB = True
-except:
+except ImportError:
     HAS_LGB = False
 
 st.set_page_config("ML Ops Tool", layout="wide")
@@ -73,17 +73,40 @@ model_container = st.sidebar.container()
 # ------------------ Column Selection ------------------
 target = st.sidebar.selectbox("Target column", df.columns)
 
-# Define all possible feature columns (excluding target)
-all_features = [c for c in df.columns if c != target]
+# --- SMART FEATURE FILTERING ---
+# We separate columns into "Safe" (Numeric or Low-Cardinality) and "Risk" (High-Cardinality Text like IDs)
+valid_features = []
+ignored_features = []
+
+for c in df.columns:
+    if c == target:
+        continue
+
+    # Check if column is numeric (Always safe)
+    if pd.api.types.is_numeric_dtype(df[c]):
+        valid_features.append(c)
+    else:
+        # Check if column is text/categorical
+        unique_count = df[c].nunique()
+        # If it has fewer than 20 unique values, it's a category (Safe)
+        # If it has more, it's likely an ID or Name (Risk)
+        if unique_count <= 20:
+            valid_features.append(c)
+        else:
+            ignored_features.append(c)
 
 features = st.sidebar.multiselect(
     "Feature columns",
-    all_features,
-    default=all_features  # <--- CHANGED: Now pre-selects ALL columns
+    options=valid_features + ignored_features,  # Show all, but...
+    default=valid_features  # ...only pre-select the safe ones
 )
+
+if ignored_features:
+    st.sidebar.caption(f"⚠️ Auto-deselected {len(ignored_features)} columns (High cardinality/IDs).")
 
 if len(features) == 0:
     st.stop()
+
 X = df[features]
 y = df[target]
 
@@ -173,9 +196,9 @@ if is_binary:
         # Case B: Data is safe -> AUTOMATICALLY OFF (No Toggle shown)
         st.sidebar.success(f"Data is balanced. (Minority: {round(actual_ratio * 100, 1)}%)")
         st.sidebar.info("✅ Balancing: **OFF (Auto-Decided)**")
-        handle_imbalance = False  # AI decides "No balancing needed"
+        handle_imbalance = False
 
-    # --- 2. VISUAL CONFIRMATION (The new part) ---
+    # --- 2. VISUAL CONFIRMATION ---
 
     st.sidebar.markdown("#### 📊 Current Class Distribution")
 
@@ -325,7 +348,44 @@ if st.button("Train Model"):
 
         with col1:
             st.subheader("Metrics")
-            st.json(metrics)
+
+            # --- UPDATED METRICS WITH BUSINESS CONTEXT ---
+            m1, m2 = st.columns(2)
+            m1.metric(
+                "Accuracy",
+                f"{metrics['Accuracy']:.1%}",
+                help="Overall Correctness.\n\n⚠️ If your data is imbalanced (e.g. 90% No / 10% Yes), high accuracy might be a lie."
+            )
+            m2.metric(
+                "ROC AUC",
+                f"{metrics['ROC AUC']:.3f}" if proba is not None else "N/A",
+                help="Prediction Power.\n\n• 1.0 = Perfect separation\n• 0.5 = Random guessing\n• < 0.65 = Unreliable model"
+            )
+
+            m3, m4 = st.columns(2)
+            m3.metric(
+                "Precision",
+                f"{metrics['Precision']:.1%}",
+                help=f"Trustworthiness.\n\nWhen the model said '{classes[1]}', it was right {metrics['Precision']:.1%} of the time.\n\n• Low Precision = Many False Alarms."
+            )
+            m4.metric(
+                "Recall",
+                f"{metrics['Recall']:.1%}",
+                help=f"Coverage.\n\nOut of all actual '{classes[1]}' cases, the model found {metrics['Recall']:.1%} of them.\n\n• Low Recall = Missed Opportunities."
+            )
+
+            m5, m6 = st.columns(2)
+            m5.metric(
+                "F1 Score",
+                f"{metrics['F1']:.3f}",
+                help="Balance.\n\nThe harmonic mean of Precision and Recall. Use this if you want a balance between finding targets and being right."
+            )
+            m6.metric(
+                "Threshold",
+                f"{metrics['Effective Threshold']:.2f}",
+                help="The Decision Cutoff.\n\nIf the probability is higher than this number, the model predicts 'Yes'."
+            )
+
             st.info(f"Applied decision threshold: {round(float(effective_threshold), 3)}")
 
             # ---------- AUC WARNING ----------
@@ -403,7 +463,26 @@ if st.button("Train Model"):
         }
         with col1:
             st.subheader("Metrics")
-            st.json(metrics)
+
+            m1, m2, m3 = st.columns(3)
+
+            m1.metric(
+                "R² Score",
+                f"{metrics['R2']:.3f}",
+                help="Explanatory Power.\n\nHow much of the target's movement is explained by your features?\n\n• 1.0 = Perfect\n• 0.0 = Useless\n• < 0.3 = Very Weak"
+            )
+
+            m2.metric(
+                "MAE",
+                f"{metrics['MAE']:.2f}",
+                help="Average Error.\n\nOn average, your prediction is off by this amount.\nExample: If predicting price, an MAE of 50 means you are usually +/- $50 wrong."
+            )
+
+            m3.metric(
+                "RMSE",
+                f"{metrics['RMSE']:.2f}",
+                help="Large Error Penalty.\n\nSimilar to MAE, but it punishes huge mistakes more. If RMSE is much higher than MAE, your model occasionally makes massive errors."
+            )
 
             st.subheader("Model Summary")
 
@@ -440,9 +519,116 @@ if st.button("Train Model"):
             plt.close(fig)
 
     # ======================================
+    # BUSINESS INSIGHTS & RELIABILITY CHECK
+    # ======================================
+    st.markdown("---")
+    st.subheader("💼 Business Applicability & Reality Check")
+
+    c1, c2 = st.columns(2)
+
+    with c1:
+        st.markdown("#### 1️⃣ What question does this answer?")
+        if is_binary:
+            st.info(f"**\"Is {target} likely to occur?\"**")
+            st.markdown(f"It predicts the probability of the **{classes[1]}** class.")
+        else:
+            st.info(f"**\"What is the expected value of {target}?\"**")
+            st.markdown("It estimates the numerical value based on the features provided.")
+
+    with c2:
+        st.markdown("#### 2️⃣ What assumptions are made?")
+
+        # --- LOGIC FOR LINEAR MODELS ---
+        if model_choice in ["Linear Regression", "Logistic Regression"]:
+            st.write("• **Linearity:** Assumes straight-line relationships.")
+
+            # Check Correlation (VIF Proxy)
+            numeric_df = X_train.select_dtypes(include=np.number)
+            if numeric_df.shape[1] > 1:
+                corr_matrix = numeric_df.corr().abs()
+                upper = corr_matrix.where(np.triu(np.ones(corr_matrix.shape), k=1).astype(bool))
+                high_corr_pairs = []
+                for col in upper.columns:
+                    for row in upper.index:
+                        if upper.loc[row, col] > 0.85:
+                            high_corr_pairs.append((row, col))
+
+                if high_corr_pairs:
+                    st.warning("⚠️ **Stability Issue (Collinearity):** Some columns are redundant.")
+                    st.markdown("**Actionable Fix:**")
+                    for pair in high_corr_pairs[:3]:
+                        st.write(
+                            f"- Remove **{pair[0]}** (It's {round(upper.loc[pair[0], pair[1]] * 100)}% similar to **{pair[1]}**).")
+                else:
+                    st.success("✅ **Independence:** Features look distinct (No redundancy detected).")
+            else:
+                st.success("✅ Data is simple enough.")
+
+        # --- LOGIC FOR GBM ---
+        elif model_choice == "GBM":
+            st.success("✅ **Flexible:** Handles complex, non-linear patterns automatically.")
+            if len(X_train) < 500:
+                st.warning(
+                    f"⚠️ **Data Warning:** You only have {len(X_train)} rows. GBMs usually need 1000+ rows to avoid memorizing data (Overfitting).")
+
+        # --- LOGIC FOR NEURAL NETWORKS ---
+        else:
+            st.write("• **Complexity:** Assumes complex non-linear relationships.")
+            if len(X_train) < 1000:
+                st.error(
+                    f"⛔ **Data Starvation:** Neural Networks require massive data to learn. You only have {len(X_train)} rows. **Recommendation:** Switch to Linear/Logistic Regression.")
+            else:
+                st.info(
+                    "ℹ️ **Black Box Warning:** This model is hard to interpret. Use only if accuracy is more important than explaining 'Why' to stakeholders.")
+
+    c3, c4 = st.columns(2)
+
+    with c3:
+        st.markdown("#### 3️⃣ When will it lie to me?")
+        liar_list = []
+
+        # Performance checks
+        if is_binary:
+            if metrics["ROC AUC"] != "N/A" and metrics["ROC AUC"] < 0.65:
+                liar_list.append(
+                    "⚠️ **Uncertainty:** The model is guessing often (AUC < 0.65). Don't trust its confidence scores.")
+        else:
+            if metrics["R2"] < 0.3:
+                liar_list.append("⚠️ **Weak Signal:** The model only explains a tiny part of the variation (<30%).")
+
+        # General checks
+        liar_list.append(
+            "⚠️ **Data Drift:** If market conditions change (e.g., inflation, new laws), these predictions will fail immediately.")
+
+        if not liar_list:
+            st.success("✅ The model is statistically robust on this test data.")
+        else:
+            for l in liar_list:
+                st.write(l)
+
+    with c4:
+        st.markdown("#### 4️⃣ What mistakes will I make?")
+        if is_binary:
+            # We use the raw confusion matrix 'cm' (Actual=Rows, Pred=Cols)
+            tn, fp, fn, tp = cm.ravel()
+
+            if fp > fn:
+                st.error(
+                    "⚠️ **False Alarms (Type I Error):** The model is 'Trigger Happy'. You will waste resources on people who won't convert.")
+            elif fn > fp:
+                st.error(
+                    "⚠️ **Missed Opportunities (Type II Error):** The model is 'Too Careful'. You will miss valuable targets.")
+            else:
+                st.info("💡 **Balanced:** The model makes False Positives and Negatives at roughly the same rate.")
+        else:
+            mae = metrics["MAE"]
+            st.error(
+                f"⚠️ **Budgeting Error:** Predictions are wrong by **{mae:.2f}** on average. Can your business margin handle this variance?")
+
     # ======================================
     # FEATURE IMPORTANCE (UNIFIED & AUTOMATED)
     # ======================================
+    st.markdown("---")
     st.subheader("Feature Importance")
 
     try:
@@ -466,12 +652,10 @@ if st.button("Train Model"):
 
             if len(useless) > 0:
                 # Check which original columns caused this explosion
-                # We look at the original categorical columns selected by the user
                 high_card_culprits = []
                 for c in cat_cols:
-                    # Check unique count in the original dataframe
                     unique_count = df[c].nunique()
-                    if unique_count > 20:  # Threshold for "High Cardinality"
+                    if unique_count > 20:
                         high_card_culprits.append(f"{c} ({unique_count} features)")
 
                 warning_msg = (
@@ -529,7 +713,6 @@ if st.button("Train Model"):
                 st.success("✅ All features are contributing positively! No drops needed.")
 
             fig_perm, ax_perm = plt.subplots(figsize=(10, 6))
-            # Color: Red for negative, Green for positive
             colors = ["#e53935" if v <= 0 else "#4caf50" for v in fi["Importance"]]
 
             ax_perm.barh(fi["Feature"], fi["Importance"], color=colors)
