@@ -435,11 +435,7 @@ if st.button("Train Model"):
                 help=f"**Harmonic Mean:**\n{f1_msg}\n\n(This is the most important metric if your data is imbalanced, e.g., fraud detection)."
             )
 
-            m6.metric(
-                "Threshold",
-                f"{metrics['Effective Threshold']:.2f}",
-                help="If Probability > This Number, we predict 'Yes'."
-            )
+
             m6.metric(
                 "Threshold",
                 f"{metrics['Effective Threshold']:.2f}",
