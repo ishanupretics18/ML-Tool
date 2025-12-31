@@ -221,16 +221,24 @@ elif model_choice == "Logistic Regression":
 
 elif model_choice == "GBM":
     if HAS_LGB:
-        # OLD LINE (Ignores handle_imbalance)
-        # model = lgb.LGBMClassifier(random_state=42) if is_binary else lgb.LGBMRegressor(random_state=42)
-
-        # NEW LINE (Connects the toggle!)
+        # Use LightGBM if installed
         if is_binary:
-            model = lgb.LGBMClassifier(random_state=42, class_weight="balanced" if handle_imbalance else None)
+            model = lgb.LGBMClassifier(
+                random_state=42,
+                class_weight="balanced" if handle_imbalance else None
+            )
         else:
             model = lgb.LGBMRegressor(random_state=42)
-
-            except:
+    else:
+        # Fallback to Scikit-Learn if LightGBM is missing
+        if is_binary:
+            try:
+                model = HistGradientBoostingClassifier(
+                    class_weight="balanced" if handle_imbalance else None,
+                    random_state=42
+                )
+            except TypeError:
+                # Handle older sklearn versions without class_weight support
                 model = HistGradientBoostingClassifier(random_state=42)
         else:
             model = HistGradientBoostingRegressor(random_state=42)
