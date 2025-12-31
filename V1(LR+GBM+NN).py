@@ -382,12 +382,21 @@ if st.button("Train Model"):
             else:
                 rec_msg = "Moderate. It finds the easy cases but misses harder ones."
 
+            # 4. Accuracy Logic (Context)
+            acc_val = metrics["Accuracy"]
+            if acc_val > 0.90:
+                acc_msg = "🌟 Excellent."
+            elif acc_val > 0.80:
+                acc_msg = "✅ Good."
+            else:
+                acc_msg = "⚠️ Fair/Poor."
+
             # --- DISPLAY METRICS ---
             m1, m2 = st.columns(2)
             m1.metric(
                 "Accuracy",
                 f"{metrics['Accuracy']:.1%}",
-                help=f"**Overall Score:** {metrics['Accuracy']:.1%}\n\n(Note: If your data is imbalanced, e.g. 90% No, a 90% accuracy is meaningless. Check F1 Score instead.)"
+                help=f"**Verdict:** {acc_msg}\n\n**Reality Check:** If your data is imbalanced (e.g. 90% No), high accuracy is meaningless. Check F1 Score instead."
             )
             m2.metric(
                 "ROC AUC",
