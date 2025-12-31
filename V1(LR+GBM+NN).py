@@ -72,15 +72,18 @@ model_container = st.sidebar.container()
 
 # ------------------ Column Selection ------------------
 target = st.sidebar.selectbox("Target column", df.columns)
+
+# Define all possible feature columns (excluding target)
+all_features = [c for c in df.columns if c != target]
+
 features = st.sidebar.multiselect(
     "Feature columns",
-    [c for c in df.columns if c != target],
-    default=[c for c in df.columns if c != target][:5]
+    all_features,
+    default=all_features  # <--- CHANGED: Now pre-selects ALL columns
 )
 
 if len(features) == 0:
     st.stop()
-
 X = df[features]
 y = df[target]
 
@@ -377,14 +380,15 @@ if st.button("Train Model"):
         # recover original class names in correct order
         labels = list(y_test.unique())  # [neg, pos]
 
-        # confusion matrix still works on 0/1…
+        # Calculate standard CM (Rows=Actual, Cols=Pred)
         cm = confusion_matrix(y_bin, preds, labels=[0, 1])
 
-        # …but we DISPLAY with real labels
+        # --- TRANSPOSE TO SWAP AXES ---
+        # Now: Rows = Predicted, Columns = Actual
         cm_df = pd.DataFrame(
-            cm,
-            index=[f"Actual: {classes[0]}", f"Actual: {classes[1]}"],
-            columns=[f"Pred: {classes[0]}", f"Pred: {classes[1]}"]
+            cm.T,  # <--- .T Transposes the matrix data
+            index=[f"Pred: {classes[0]}", f"Pred: {classes[1]}"],
+            columns=[f"Actual: {classes[0]}", f"Actual: {classes[1]}"]
         )
 
         st.subheader("Confusion Matrix")
