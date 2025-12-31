@@ -730,24 +730,28 @@ if st.button("Train Model"):
                 # Check which original columns caused this explosion
                 high_card_culprits = []
                 for c in cat_cols:
-                    unique_count = df[c].nunique()
-                    if unique_count > 20:
-                        high_card_culprits.append(f"{c} ({unique_count} features)")
+                    if c in df.columns:  # Safety check
+                        unique_count = df[c].nunique()
+                        if unique_count > 20:
+                            high_card_culprits.append(f"{c} ({unique_count} features)")
 
                 warning_msg = (
                     f"⚠️ **Optimization Tip:** Found **{len(useless)} features** with 0.0 importance (Useless).\n"
-                    "This is often caused by categorical columns with too many unique values (like IDs or Names).\n\n"
                 )
 
+                # --- NEW: Explicitly list the feature names ---
+                warning_msg += f"\n**Features to Remove:** {', '.join(useless['Feature'].tolist())}\n\n"
+
                 if high_card_culprits:
-                    warning_msg += "**Likely Culprits (Columns causing feature explosion):**\n- "
+                    warning_msg += "**Likely Cause (High Cardinality columns):**\n- "
                     warning_msg += "\n- ".join(high_card_culprits)
+                else:
+                    warning_msg += "These features simply didn't help the model learn anything. You can safely drop them."
 
                 st.warning(warning_msg)
 
             else:
                 st.success("✅ All features are contributing! No completely useless features found.")
-
             # Plot top 20
             fi = fi.sort_values(by="Importance", ascending=True).tail(20)
 
