@@ -168,11 +168,10 @@ if is_binary:
         handle_imbalance = True
         is_auto_enabled = True
     else:
+        # Case B: Data is safe -> AUTOMATICALLY OFF (No Toggle shown)
         st.sidebar.success(f"Data is balanced. (Minority: {round(actual_ratio * 100, 1)}%)")
-        handle_imbalance = st.sidebar.toggle(
-            "Handle class imbalance",
-            value=False
-        )
+        st.sidebar.info("✅ Balancing: **OFF (Auto-Decided)**")
+        handle_imbalance = False  # AI decides "No balancing needed"
 
     # --- 2. VISUAL CONFIRMATION (The new part) ---
 
@@ -186,9 +185,6 @@ if is_binary:
 
     # Show Table
     st.sidebar.dataframe(balance_df, use_container_width=True)
-
-    # Show Chart (Simple Bar)
-    st.sidebar.bar_chart(counts, color="#4b72af", height=150)
 
     # --- 3. FINAL STATUS INDICATOR ---
     st.sidebar.markdown("#### 🛠️ Status")
