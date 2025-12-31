@@ -436,14 +436,16 @@ if st.button("Train Model"):
             plt.close(fig)
 
     # ======================================
-    # FEATURE IMPORTANCE (CORRECTED)
+    # FEATURE IMPORTANCE (UNIFIED & AUTOMATED)
     # ======================================
     st.subheader("Feature Importance")
 
     try:
         final_model = pipeline.named_steps["model"]
 
-        # 1) Native importance (GBM / RF / Tree models)
+        # ------------------------------------------------------
+        # 1) Native Importance (GBM / Random Forest / Decision Trees)
+        # ------------------------------------------------------
         if hasattr(final_model, "feature_importances_"):
             importances = final_model.feature_importances_
 
@@ -453,16 +455,30 @@ if st.button("Train Model"):
                 names = [f"Feat_{i}" for i in range(len(importances))]
 
             fi = pd.DataFrame({"Feature": names, "Importance": importances})
+
+            # --- AUTO-SUGGEST FOR GBM (Check for Zeros) ---
+            useless = fi[fi["Importance"] == 0]
+            if len(useless) > 0:
+                st.warning(
+                    f"⚠️ **Optimization Tip:** Found {len(useless)} features with **0.0 importance** (Useless).\n"
+                    "Removing them won't hurt accuracy but will make the model faster."
+                )
+            else:
+                st.success("✅ All features are contributing! No completely useless features found.")
+
+            # Plot top 20
             fi = fi.sort_values(by="Importance", ascending=True).tail(20)
 
             fig_imp, ax_imp = plt.subplots(figsize=(10, 6))
             ax_imp.barh(fi["Feature"], fi["Importance"], color="#4b72af")
             ax_imp.set_title(f"Native Importance ({model_choice})")
-            ax_imp.set_xlabel("Relative Importance")
+            ax_imp.set_xlabel("Relative Importance (Gain)")
             st.pyplot(fig_imp)
             plt.close(fig_imp)
 
+        # ------------------------------------------------------
         # 2) Permutation Importance (Linear / Logistic / NN)
+        # ------------------------------------------------------
         else:
             with st.spinner("Calculating Permutation Importance..."):
                 result = permutation_importance(
@@ -474,18 +490,14 @@ if st.button("Train Model"):
                     n_jobs=-1
                 )
 
-            # Use Raw Columns to prevent Dimension Mismatch
             names = X_test.columns
             imp = result.importances_mean
 
             fi = pd.DataFrame({"Feature": names, "Importance": imp})
             fi = fi.sort_values(by="Importance", ascending=True)
 
-            # -------------------------------------------------
-            # AUTO-SUGGEST features to drop
-            # -------------------------------------------------
+            # --- AUTO-SUGGEST FOR PERMUTATION (Check for Negatives) ---
             weak = fi[fi["Importance"] <= 0]
-
             if len(weak) > 0:
                 st.warning(
                     "⚠️ **Optimization Tip:** These features seem to be hurting accuracy (Importance ≤ 0).\n"
@@ -496,7 +508,9 @@ if st.button("Train Model"):
                 st.success("✅ All features are contributing positively! No drops needed.")
 
             fig_perm, ax_perm = plt.subplots(figsize=(10, 6))
-            colors = ["#4caf50" if v > 0 else "#e53935" for v in fi["Importance"]]
+            # Color: Red for negative, Green for positive
+            colors = ["#e53935" if v <= 0 else "#4caf50" for v in fi["Importance"]]
+
             ax_perm.barh(fi["Feature"], fi["Importance"], color=colors)
             ax_perm.set_title("Permutation Importance")
             ax_perm.set_xlabel("Performance Drop if Shuffled")
