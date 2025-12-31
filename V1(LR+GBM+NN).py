@@ -349,49 +349,81 @@ if st.button("Train Model"):
         with col1:
             st.subheader("Metrics")
 
-            # --- UPDATED METRICS WITH BUSINESS CONTEXT ---
+            # --- DYNAMIC INTERPRETATION LOGIC ---
+
+            # 1. AUC Logic
+            auc_val = metrics["ROC AUC"]
+            if auc_val == "N/A":
+                auc_msg = "N/A (Model doesn't support probabilities)"
+            elif auc_val > 0.85:
+                auc_msg = "🌟 Excellent. The model is very good at distinguishing Yes from No."
+            elif auc_val > 0.70:
+                auc_msg = "✅ Good. The model is reliable for most predictions."
+            elif auc_val > 0.60:
+                auc_msg = "⚠️ Fair. The model struggles with hard cases."
+            else:
+                auc_msg = "⛔ Poor. The model is barely better than a coin flip (Random Guessing)."
+
+            # 2. Precision Logic (Trust)
+            prec_val = metrics["Precision"]
+            if prec_val > 0.8:
+                prec_msg = "High Trust. When it predicts 'Yes', it's usually right."
+            elif prec_val < 0.5:
+                prec_msg = "⚠️ False Alarm Prone. It predicts 'Yes' too often, leading to wasted effort."
+            else:
+                prec_msg = "Moderate. Expect some false alarms."
+
+            # 3. Recall Logic (Coverage)
+            rec_val = metrics["Recall"]
+            if rec_val > 0.8:
+                rec_msg = "High Coverage. It finds almost all the 'Yes' cases."
+            elif rec_val < 0.5:
+                rec_msg = "⚠️ Missed Opportunities. It is missing more than half of the targets."
+            else:
+                rec_msg = "Moderate. It finds the easy cases but misses harder ones."
+
+            # --- DISPLAY METRICS ---
             m1, m2 = st.columns(2)
             m1.metric(
                 "Accuracy",
                 f"{metrics['Accuracy']:.1%}",
-                help="Overall Correctness.\n\n⚠️ If your data is imbalanced (e.g. 90% No / 10% Yes), high accuracy might be a lie."
+                help=f"**Overall Score:** {metrics['Accuracy']:.1%}\n\n(Note: If your data is imbalanced, e.g. 90% No, a 90% accuracy is meaningless. Check F1 Score instead.)"
             )
             m2.metric(
                 "ROC AUC",
-                f"{metrics['ROC AUC']:.3f}" if proba is not None else "N/A",
-                help="Prediction Power.\n\n• 1.0 = Perfect separation\n• 0.5 = Random guessing\n• < 0.65 = Unreliable model"
+                f"{auc_val:.3f}" if isinstance(auc_val, float) else auc_val,
+                help=f"**Prediction Power:**\n{auc_msg}\n\n(1.0 = Perfect, 0.5 = Random)"
             )
 
             m3, m4 = st.columns(2)
             m3.metric(
                 "Precision",
                 f"{metrics['Precision']:.1%}",
-                help=f"Trustworthiness.\n\nWhen the model said '{classes[1]}', it was right {metrics['Precision']:.1%} of the time.\n\n• Low Precision = Many False Alarms."
+                help=f"**Trustworthiness:**\n{prec_msg}\n\n(Precision = True Positives / All Predicted Positives)"
             )
             m4.metric(
                 "Recall",
                 f"{metrics['Recall']:.1%}",
-                help=f"Coverage.\n\nOut of all actual '{classes[1]}' cases, the model found {metrics['Recall']:.1%} of them.\n\n• Low Recall = Missed Opportunities."
+                help=f"**Coverage:**\n{rec_msg}\n\n(Recall = True Positives / All Actual Positives)"
             )
 
             m5, m6 = st.columns(2)
             m5.metric(
                 "F1 Score",
                 f"{metrics['F1']:.3f}",
-                help="Balance.\n\nThe harmonic mean of Precision and Recall. Use this if you want a balance between finding targets and being right."
+                help="The balance between Precision and Recall. Use this if you have imbalanced data."
             )
             m6.metric(
                 "Threshold",
                 f"{metrics['Effective Threshold']:.2f}",
-                help="The Decision Cutoff.\n\nIf the probability is higher than this number, the model predicts 'Yes'."
+                help="If Probability > This Number, we predict 'Yes'."
             )
 
             st.info(f"Applied decision threshold: {round(float(effective_threshold), 3)}")
 
             # ---------- AUC WARNING ----------
             if proba is not None:
-                auc_value = metrics["ROC AUC"]
-                if auc_value != "N/A" and auc_value < 0.6:
+                if auc_val != "N/A" and auc_val < 0.6:
                     st.warning(
                         "⚠️ Model may be unreliable (AUC < 0.6). "
                         "Consider adding features, cleaning data, or trying another model."
@@ -466,22 +498,41 @@ if st.button("Train Model"):
 
             m1, m2, m3 = st.columns(3)
 
+            # Dynamic R2 Explanation
+            r2_val = metrics['R2']
+            if r2_val > 0.8:
+                r2_msg = "Excellent. Your model captures almost all the patterns."
+            elif r2_val > 0.5:
+                r2_msg = "Decent. The model sees the main trend but misses some details."
+            else:
+                r2_msg = "Poor. Your features don't explain the target well."
+
             m1.metric(
                 "R² Score",
                 f"{metrics['R2']:.3f}",
-                help="Explanatory Power.\n\nHow much of the target's movement is explained by your features?\n\n• 1.0 = Perfect\n• 0.0 = Useless\n• < 0.3 = Very Weak"
+                help=f"**Your Score: {metrics['R2']:.3f}**\n\n{r2_msg}\n(1.0 is perfect, 0.0 is random guessing)."
             )
 
+            # Dynamic MAE Explanation
+            mae_val = metrics['MAE']
             m2.metric(
                 "MAE",
                 f"{metrics['MAE']:.2f}",
-                help="Average Error.\n\nOn average, your prediction is off by this amount.\nExample: If predicting price, an MAE of 50 means you are usually +/- $50 wrong."
+                help=f"**Real-World Meaning:**\nOn average, every prediction your model makes is off by **+/- {mae_val:.2f}**.\n\nAsk yourself: Can the business tolerate an error of {mae_val:.2f}?"
             )
+
+            # Dynamic RMSE Explanation
+            rmse_val = metrics['RMSE']
+            diff = rmse_val - mae_val
+            if diff > 1.0:
+                rmse_msg = "⚠️ High. This is much higher than MAE, meaning your model occasionally makes HUGE errors."
+            else:
+                rmse_msg = "✅ Low. This is close to MAE, meaning your model is consistent."
 
             m3.metric(
                 "RMSE",
                 f"{metrics['RMSE']:.2f}",
-                help="Large Error Penalty.\n\nSimilar to MAE, but it punishes huge mistakes more. If RMSE is much higher than MAE, your model occasionally makes massive errors."
+                help=f"**Large Error Penalty:**\n{rmse_msg}\n(RMSE penalizes massive mistakes more than small ones)."
             )
 
             st.subheader("Model Summary")
@@ -554,13 +605,15 @@ if st.button("Train Model"):
                             high_corr_pairs.append((row, col))
 
                 if high_corr_pairs:
-                    st.warning("⚠️ **Stability Issue (Collinearity):** Some columns are redundant.")
-                    st.markdown("**Actionable Fix:**")
+                    st.warning("⚠️ **Stability Issue (Collinearity):** The following columns duplicate information.")
+                    st.markdown("**Actionable Fix (Remove one from each pair):**")
                     for pair in high_corr_pairs[:3]:
                         st.write(
-                            f"- Remove **{pair[0]}** (It's {round(upper.loc[pair[0], pair[1]] * 100)}% similar to **{pair[1]}**).")
+                            f"- **{pair[0]}** is {round(upper.loc[pair[0], pair[1]] * 100)}% identical to **{pair[1]}**.")
                 else:
-                    st.success("✅ **Independence:** Features look distinct (No redundancy detected).")
+                    # Explicitly tell the user everything is fine
+                    st.success(
+                        "✅ **No Action Needed:** No columns need removal. All features provide unique information (Low Collinearity).")
             else:
                 st.success("✅ Data is simple enough.")
 
