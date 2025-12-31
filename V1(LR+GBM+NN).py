@@ -416,11 +416,29 @@ if st.button("Train Model"):
                 help=f"**Coverage:**\n{rec_msg}\n\n(Recall = True Positives / All Actual Positives)"
             )
 
+            # 5. F1 Score Logic (Balance)
+            f1_val = metrics["F1"]
+            if f1_val > 0.8:
+                f1_msg = "🌟 Excellent Balance. The model is strong in both Precision and Recall."
+            elif f1_val > 0.6:
+                f1_msg = "✅ Good. A solid compromise between finding targets and being right."
+            elif f1_val > 0.4:
+                f1_msg = "⚠️ Fair. The model is struggling to balance false alarms vs. missed targets."
+            else:
+                f1_msg = "⛔ Poor. The model is failing to identify the positive class effectively."
+
             m5, m6 = st.columns(2)
+
             m5.metric(
                 "F1 Score",
                 f"{metrics['F1']:.3f}",
-                help="The balance between Precision and Recall. Use this if you have imbalanced data."
+                help=f"**Harmonic Mean:**\n{f1_msg}\n\n(This is the most important metric if your data is imbalanced, e.g., fraud detection)."
+            )
+
+            m6.metric(
+                "Threshold",
+                f"{metrics['Effective Threshold']:.2f}",
+                help="If Probability > This Number, we predict 'Yes'."
             )
             m6.metric(
                 "Threshold",
