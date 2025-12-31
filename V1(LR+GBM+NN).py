@@ -440,6 +440,7 @@ if st.button("Train Model"):
             plt.close(fig)
 
     # ======================================
+    # ======================================
     # FEATURE IMPORTANCE (UNIFIED & AUTOMATED)
     # ======================================
     st.subheader("Feature Importance")
@@ -462,11 +463,28 @@ if st.button("Train Model"):
 
             # --- AUTO-SUGGEST FOR GBM (Check for Zeros) ---
             useless = fi[fi["Importance"] == 0]
+
             if len(useless) > 0:
-                st.warning(
-                    f"⚠️ **Optimization Tip:** Found {len(useless)} features with **0.0 importance** (Useless).\n"
-                    "Removing them won't hurt accuracy but will make the model faster."
+                # Check which original columns caused this explosion
+                # We look at the original categorical columns selected by the user
+                high_card_culprits = []
+                for c in cat_cols:
+                    # Check unique count in the original dataframe
+                    unique_count = df[c].nunique()
+                    if unique_count > 20:  # Threshold for "High Cardinality"
+                        high_card_culprits.append(f"{c} ({unique_count} features)")
+
+                warning_msg = (
+                    f"⚠️ **Optimization Tip:** Found **{len(useless)} features** with 0.0 importance (Useless).\n"
+                    "This is often caused by categorical columns with too many unique values (like IDs or Names).\n\n"
                 )
+
+                if high_card_culprits:
+                    warning_msg += "**Likely Culprits (Columns causing feature explosion):**\n- "
+                    warning_msg += "\n- ".join(high_card_culprits)
+
+                st.warning(warning_msg)
+
             else:
                 st.success("✅ All features are contributing! No completely useless features found.")
 
@@ -479,7 +497,6 @@ if st.button("Train Model"):
             ax_imp.set_xlabel("Relative Importance (Gain)")
             st.pyplot(fig_imp)
             plt.close(fig_imp)
-
         # ------------------------------------------------------
         # 2) Permutation Importance (Linear / Logistic / NN)
         # ------------------------------------------------------
