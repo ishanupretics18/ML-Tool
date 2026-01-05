@@ -366,7 +366,39 @@ if st.button("Train Model"):
             try:
                 search.fit(X_train, y_train)
                 pipeline = search.best_estimator_
-                st.success(f"✅ Optimization Complete! Best Params: {search.best_params_}")
+                # --- BUSINESS FRIENDLY TRANSLATOR ---
+                best_params = search.best_params_
+
+                # 1. Dictionary to translate computer-speak to Business English
+                translator = {
+                    "model__C": "Strictness (C)",
+                    "model__alpha": "Smoothing (Alpha)",
+                    "model__learning_rate": "Learning Speed",
+                    "model__n_estimators": "Number of Trees",
+                    "model__max_depth": "Max Decision Depth",
+                    "model__num_leaves": "Tree Complexity (Leaves)",
+                    "model__max_leaf_nodes": "Max Tree Branches",
+                    "model__hidden_layer_sizes": "Neural Network Layers",
+                    "model__learning_rate_init": "Initial Learning Speed"
+                }
+
+                # 2. Format the message
+                friendly_msg = []
+                for key, value in best_params.items():
+                    # Get readable name or fallback to key
+                    name = translator.get(key, key.replace("model__", ""))
+
+                    # Clean up the number (remove np.float64 wrapper and round)
+                    if isinstance(value, (float, np.floating)):
+                        val_str = f"{value:.4f}"  # Round to 4 decimals
+                    else:
+                        val_str = str(value)
+
+                    friendly_msg.append(f"**{name}:** {val_str}")
+
+                # 3. Print clean success message
+                st.success(f"✅ **Optimization Complete!** The AI found the best configuration:\n\n" + "  \n".join(
+                    friendly_msg))
             except Exception as e:
                 st.error(f"⚠️ Tuning Failed (likely memory). Reverting to default settings. Error: {e}")
                 pipeline.fit(X_train, y_train)
