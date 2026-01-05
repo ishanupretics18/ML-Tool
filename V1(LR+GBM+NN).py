@@ -340,24 +340,24 @@ pipeline = Pipeline([
 
 
 # ------------------ Train ------------------
+# ------------------ Train ------------------
 if st.button("Train Model"):
     # --- AUTO-TUNING BLOCK ---
     if enable_tuning:
         with st.spinner("⚡ Optimizing Hyperparameters... (This may take up to 60s)"):
-            # RandomizedSearchCV with SAFETY LOCKS (n_jobs=1, fixed seed)
+            # ... (Tuning logic remains the same) ...
             search = RandomizedSearchCV(
                 pipeline,
                 param_distributions=param_dist,
-                n_iter=10,  # Try 10 combinations
-                cv=3,  # 3-Fold Cross Validation
-                random_state=42,  # FIXED SEED (Stability)
-                n_jobs=1,  # SEQUENTIAL (Safety/RAM)
+                n_iter=10,
+                cv=3,
+                random_state=42,
+                n_jobs=1,
                 scoring='f1' if is_binary else 'r2'
             )
             try:
                 search.fit(X_train, y_train)
                 pipeline = search.best_estimator_
-                # CLARITY: Print the winning parameters
                 st.success(f"✅ Optimization Complete! Best Params: {search.best_params_}")
             except Exception as e:
                 st.error(f"⚠️ Tuning Failed (likely memory). Reverting to default settings. Error: {e}")
@@ -365,53 +365,42 @@ if st.button("Train Model"):
     else:
         # Standard fast training (Fallback)
         pipeline.fit(X_train, y_train)
-   # default predictions (used for regression)
+
+    # <--- CHANGE STARTS HERE: ensure these lines align with the 'if' and 'else' above
+    # default predictions (used for regression)
     preds = pipeline.predict(X_test)
 
+    # override class decisions based on threshold
+    if is_binary and hasattr(pipeline.named_steps["model"], "predict_proba"):
+        # Sort unique values to ensure 0 is first, 1 is second consistently
+        classes = sorted(y_test.unique())
+        y_bin = (y_test == classes[1]).astype(int)
 
-   # override class decisions based on threshold
-   if is_binary and hasattr(pipeline.named_steps["model"], "predict_proba"):
-       # Sort unique values to ensure 0 is first, 1 is second consistently
-       classes = sorted(y_test.unique())
-       y_bin = (y_test == classes[1]).astype(int)
+        proba = pipeline.predict_proba(X_test)[:, 1]
+        from sklearn.metrics import precision_recall_curve
 
+        if threshold_mode == "Manual":
+            best_threshold = threshold
+        else:
+            precisions, recalls, ths = precision_recall_curve(y_bin, proba)
 
-       proba = pipeline.predict_proba(X_test)[:, 1]
-       from sklearn.metrics import precision_recall_curve
+            if threshold_mode == "Optimize for Recall":
+                idx = recalls.argmax()
+                best_threshold = ths[idx]
+            elif threshold_mode == "Optimize for Precision":
+                idx = precisions.argmax()
+                best_threshold = ths[idx]
+            else:  # Optimize F1
+                f1_scores = 2 * (precisions * recalls) / (precisions + recalls + 1e-9)
+                idx = f1_scores.argmax()
+                best_threshold = ths[idx]
 
+            st.info(f"Using optimized threshold: {round(float(best_threshold), 3)}")
 
-       if threshold_mode == "Manual":
-           best_threshold = threshold
+        effective_threshold = float(best_threshold)
 
-
-       else:
-           precisions, recalls, ths = precision_recall_curve(y_bin, proba)
-
-
-           if threshold_mode == "Optimize for Recall":
-               idx = recalls.argmax()
-               best_threshold = ths[idx]
-
-
-           elif threshold_mode == "Optimize for Precision":
-               idx = precisions.argmax()
-               best_threshold = ths[idx]
-
-
-           else:  # Optimize F1
-               f1_scores = 2 * (precisions * recalls) / (precisions + recalls + 1e-9)
-               idx = f1_scores.argmax()
-               best_threshold = ths[idx]
-
-
-           st.info(f"Using optimized threshold: {round(float(best_threshold), 3)}")
-
-
-       effective_threshold = float(best_threshold)
-
-
-       # FINAL PREDICTIONS
-       preds = (proba >= effective_threshold).astype(int)
+        # FINAL PREDICTIONS
+        preds = (proba >= effective_threshold).astype(int)
 
 
    # Fallback for binary models without predict_proba (rare)
