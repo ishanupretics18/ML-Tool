@@ -790,148 +790,194 @@ if st.button("Train Model"):
         st.dataframe(cm_df)
 
 
-
-
-
     else:
+
+        # ---------------------------------------------------------
+
+        # 1. CALCULATE RAW METRICS
+
+        # ---------------------------------------------------------
 
         mse = mean_squared_error(y_test, preds)
 
         r2 = r2_score(y_test, preds)
 
-        # --- Calculate Adjusted R2 ---
+        # Calculate Adjusted R2 (Correctly counting features)
 
         n = len(y_test)
 
         try:
 
-            # Best method: Ask the model how many features it saw
+            # Ask the model how many features it actually used
 
             p = pipeline.named_steps["model"].n_features_in_
 
         except AttributeError:
 
-            # Fallback: Transform data and count columns manually
+            # Fallback for models that don't track this
 
             p = pipeline.named_steps["prep"].transform(X_test).shape[1]
 
-        # Safety Check: Prevent Division by Zero if n <= p + 1
+        # Prevent Division by Zero
 
         if n > p + 1:
 
             adj_r2 = 1 - (1 - r2) * (n - 1) / (n - p - 1)
 
         else:
-            # ---------------------------------------------------------
-            # 1. CALCULATE RAW METRICS
-            # ---------------------------------------------------------
-            mse = mean_squared_error(y_test, preds)
-            r2 = r2_score(y_test, preds)
 
-            # Calculate Adjusted R2 (Correctly counting features)
-            n = len(y_test)
-            try:
-                # Ask the model how many features it actually used
-                p = pipeline.named_steps["model"].n_features_in_
-            except AttributeError:
-                # Fallback for models that don't track this
-                p = pipeline.named_steps["prep"].transform(X_test).shape[1]
+            adj_r2 = r2
 
-            # Prevent Division by Zero
-            if n > p + 1:
-                adj_r2 = 1 - (1 - r2) * (n - 1) / (n - p - 1)
+        # --- CRITICAL FIX: Ensure 'metrics' is defined here for later use ---
+
+        metrics = {
+
+            "MAE": mean_absolute_error(y_test, preds),
+
+            "RMSE": np.sqrt(mse),
+
+            "R2": r2,
+
+            "Adj R2": adj_r2
+
+        }
+
+        # ---------------------------------------------------------
+
+        # 2. GENERATE DYNAMIC HELP MESSAGES
+
+        # ---------------------------------------------------------
+
+        # A. R-Squared Logic
+
+        r2_val = metrics['R2']
+
+        if r2_val > 0.8:
+
+            r2_msg = "🌟 **Excellent.** The model explains most of the variation in the target."
+
+        elif r2_val > 0.5:
+
+            r2_msg = "✅ **Decent.** The model sees the main trends, but misses some finer details."
+
+        else:
+
+            r2_msg = "⚠️ **Poor.** The features provided do not explain the target well."
+
+        # B. Adjusted R-Squared Logic
+
+        diff = metrics['R2'] - metrics['Adj R2']
+
+        if metrics['Adj R2'] < 0:
+
+            adj_msg = "⛔ **Critical:** Model is worse than random guessing."
+
+        elif diff > 0.10:
+
+            adj_msg = f"⚠️ **High Bloat:** Score dropped by {diff:.3f}. Too many useless columns."
+
+        elif diff > 0.05:
+
+            adj_msg = "ℹ️ **Fair:** Moderate penalty applied."
+
+        else:
+
+            adj_msg = "✅ **Efficient:** The model is not 'stuffed' with junk data."
+
+        # C. MAE Logic
+
+        target_mean = y_test.mean()
+
+        mae_val = metrics['MAE']
+
+        error_pct = (mae_val / target_mean) * 100 if target_mean != 0 else 0
+
+        if error_pct < 10:
+
+            mae_msg = f"🌟 **High Precision:** Off by only ~{error_pct:.1f}%."
+
+        elif error_pct < 20:
+
+            mae_msg = f"✅ **Acceptable:** Off by ~{error_pct:.1f}%."
+
+        else:
+
+            mae_msg = f"⚠️ **High Error:** Off by ~{error_pct:.1f}%."
+
+        # D. RMSE Logic
+
+        rmse_val = metrics['RMSE']
+
+        gap = rmse_val - mae_val
+
+        if gap > (mae_val * 0.5):
+
+            rmse_msg = "⚠️ **Unstable:** RMSE >> MAE. Occasional massive mistakes (Outliers)."
+
+        else:
+
+            rmse_msg = "✅ **Stable:** RMSE is close to MAE."
+
+        # ---------------------------------------------------------
+
+        # 3. DISPLAY METRICS (FIXED: 2x2 GRID)
+
+        # ---------------------------------------------------------
+
+        with col1:
+
+            st.subheader("Metrics")
+
+            # Row 1: R2 and Adj R2
+
+            r1c1, r1c2 = st.columns(2)
+
+            r1c1.metric("R² Score", f"{metrics['R2']:.3f}", help=f"{r2_msg}\n(1.0 = Perfect)")
+
+            r1c2.metric("Adj. R²", f"{metrics['Adj R2']:.3f}", help=adj_msg)
+
+            # Row 2: MAE and RMSE
+
+            r2c1, r2c2 = st.columns(2)
+
+            r2c1.metric("MAE", f"{metrics['MAE']:.2f}", help=f"**Meaning:**\n{mae_msg}")
+
+            r2c2.metric("RMSE", f"{metrics['RMSE']:.2f}", help=f"**Stability:**\n{rmse_msg}")
+
+            st.subheader("Model Summary")
+
+            if metrics["R2"] < 0.4:
+
+                st.warning("Very weak model — predictions are unreliable.")
+
+            elif metrics["R2"] < 0.7:
+
+                st.info("Okay model — usable but improve if possible.")
+
             else:
-                adj_r2 = r2
 
-            metrics = {
-                "MAE": mean_absolute_error(y_test, preds),
-                "RMSE": np.sqrt(mse),
-                "R2": r2,
-                "Adj R2": adj_r2
-            }
-
-            # ---------------------------------------------------------
-            # 2. GENERATE DYNAMIC HELP MESSAGES (THE INTELLIGENCE)
-            # ---------------------------------------------------------
-
-            # A. R-Squared Logic
-            r2_val = metrics['R2']
-            if r2_val > 0.8:
-                r2_msg = "🌟 **Excellent.** The model explains most of the variation in the target. It captures the patterns very well."
-            elif r2_val > 0.5:
-                r2_msg = "✅ **Decent.** The model sees the main trends, but misses some finer details. Good for general strategy."
-            else:
-                r2_msg = "⚠️ **Poor.** The model is struggling. The features provided do not explain the target well."
-
-            # B. Adjusted R-Squared Logic (Bloat Detector)
-            diff = metrics['R2'] - metrics['Adj R2']
-            if metrics['Adj R2'] < 0:
-                adj_msg = "⛔ **Critical:** The model is worse than random guessing. Your features likely have NO relationship with the target."
-            elif diff > 0.10:
-                adj_msg = f"⚠️ **High Bloat:** Score dropped by {diff:.3f}. You have too many useless columns (Noise) relative to your data size."
-            elif diff > 0.05:
-                adj_msg = "ℹ️ **Fair:** Moderate penalty applied. You might have a few redundant features."
-            else:
-                adj_msg = "✅ **Efficient:** The model is healthy. It is not 'stuffed' with junk data."
-
-            # C. MAE Logic (Contextual % Error)
-            target_mean = y_test.mean()
-            mae_val = metrics['MAE']
-            error_pct = (mae_val / target_mean) * 100 if target_mean != 0 else 0
-
-            if error_pct < 10:
-                mae_msg = f"🌟 **High Precision:** Predictions are only off by ~{error_pct:.1f}% on average. This is very sharp."
-            elif error_pct < 20:
-                mae_msg = f"✅ **Acceptable:** Predictions are off by ~{error_pct:.1f}%. This is useful for general forecasting."
-            else:
-                mae_msg = f"⚠️ **High Error:** Predictions are off by ~{error_pct:.1f}%. Be careful using this for precise budget planning."
-
-            # D. RMSE Logic (Outlier Detector)
-            rmse_val = metrics['RMSE']
-            gap = rmse_val - mae_val
-            if gap > (mae_val * 0.5):
-                rmse_msg = "⚠️ **Unstable:** RMSE is much higher than MAE. This means your model occasionally makes **massive** mistakes (Outliers)."
-            else:
-                rmse_msg = "✅ **Stable:** RMSE is close to MAE. The model's errors are consistent and predictable."
-
-            # ---------------------------------------------------------
-            # 3. DISPLAY METRICS (2x2 GRID TO FIX TRUNCATION)
-            # ---------------------------------------------------------
-            with col1:
-                st.subheader("Metrics")
-
-                # Row 1
-                row1_col1, row1_col2 = st.columns(2)
-                row1_col1.metric("R² Score", f"{metrics['R2']:.3f}",
-                                 help=f"{r2_msg}\n\n(Scale: 0.0 = Random, 1.0 = Perfect)")
-                row1_col2.metric("Adj. R²", f"{metrics['Adj R2']:.3f}", help=adj_msg)
-
-                # Row 2
-                row2_col1, row2_col2 = st.columns(2)
-                row2_col1.metric("MAE", f"{metrics['MAE']:.2f}", help=f"**Business Meaning:**\n{mae_msg}")
-                row2_col2.metric("RMSE", f"{metrics['RMSE']:.2f}", help=f"**Stability Check:**\n{rmse_msg}")
-
-                st.subheader("Model Summary")
-                if metrics["R2"] < 0.4:
-                    st.warning("Very weak model — predictions are unreliable.")
-                elif metrics["R2"] < 0.7:
-                    st.info("Okay model — usable but improve if possible.")
-                else:
-                    st.success("Strong model — predictions are quite reliable.")
-
+                st.success("Strong model — predictions are quite reliable.")
 
         st.markdown("---")
 
         left, center, right = st.columns([1, 3, 1])
 
         with center:
+
             fig, ax = plt.subplots(figsize=(12, 6))
+
             ax.scatter(preds, y_test - preds, alpha=0.6)
+
             ax.axhline(0, color="red", linewidth=1)
+
             ax.set_title("Residuals")
+
             ax.set_xlabel("Predicted Values")
+
             ax.set_ylabel("Residuals (Actual - Predicted)")
+
             st.pyplot(fig, use_container_width=True)
+
             plt.close(fig)
 
     # ======================================
