@@ -397,7 +397,7 @@ if st.button("Train Model"):
                     friendly_msg.append(f"**{name}:** {val_str}")
 
                 # 3. Print clean success message
-                st.success(f"✅ **Optimization Complete!** The AI found the best configuration:\n\n" + "  \n".join(
+                st.success(f"✅ **Optimization Complete! Best settings found:\n\n" + "  \n".join(
                     friendly_msg))
             except Exception as e:
                 st.error(f"⚠️ Tuning Failed (likely memory). Reverting to default settings. Error: {e}")
