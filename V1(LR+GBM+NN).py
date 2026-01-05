@@ -137,6 +137,15 @@ train_mask = y.notna()
 X_train_all = X.loc[train_mask]
 y_train_all = y.loc[train_mask]
 
+# <---SAFETY CHECK STARTS HERE --->
+if len(X_train_all) < 5:
+    st.error(
+        f"❌ Not enough training data! "
+        f"The target column '{target}' only has {len(X_train_all)} valid (non-empty) rows. "
+        "You need at least 5 rows of data to train a model."
+    )
+    st.stop()
+# <--- SAFETY CHECK ENDS HERE --->
 
 X_to_predict = X.loc[~train_mask]
 
