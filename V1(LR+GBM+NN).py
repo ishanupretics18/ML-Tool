@@ -153,6 +153,120 @@ X_to_predict = X.loc[~train_mask]
 # Detect type only from training rows
 is_binary = y_train_all.nunique() == 2
 
+# ==========================================
+# 2.5 DATA INTELLIGENCE (IV & CORRELATION)
+# ==========================================
+if len(X) > 0:
+    st.markdown("---")
+    st.subheader("📊 Data Intelligence")
+
+    # A. BINARY TARGET: Calculate Information Value (IV)
+    if is_binary:
+        st.caption("ℹ️ **Information Value (IV):** Ranks features by how well they split 'Yes' vs 'No'.")
+
+        iv_data = []
+
+
+        # Helper to calc IV for one column
+        def calc_iv(df, feature, target):
+            lst = []
+            # Bin numeric columns to make them categorical for IV calc
+            if pd.api.types.is_numeric_dtype(df[feature]):
+                try:
+                    # qcut creates equal-sized buckets (e.g. Low, Med, High)
+                    df[feature] = pd.qcut(df[feature], q=5, duplicates='drop').astype(str)
+                except:
+                    pass  # Keep as is if qcut fails (e.g. too few unique values)
+
+            for val in df[feature].unique():
+                lst.append([feature, val, df[(df[feature] == val) & (df[target] == 1)].shape[0],
+                            df[(df[feature] == val) & (df[target] == 0)].shape[0]])
+
+            data = pd.DataFrame(lst, columns=['Variable', 'Value', 'Good', 'Bad'])
+            data = data[data['Bad'] > 0]
+            data = data[data['Good'] > 0]
+
+            total_good = data['Good'].sum()
+            total_bad = data['Bad'].sum()
+
+            data['Dist_Good'] = data['Good'] / total_good
+            data['Dist_Bad'] = data['Bad'] / total_bad
+            data['WoE'] = np.log(data['Dist_Good'] / data['Dist_Bad'])
+            data['IV'] = (data['Dist_Good'] - data['Dist_Bad']) * data['WoE']
+
+            return data['IV'].sum()
+
+
+        # Run IV loop (Limit to first 5000 rows for speed if dataset is huge)
+        with st.spinner("Analyzing feature power (IV)..."):
+            temp_df = df.copy().head(5000)
+            # Map target to 0/1 for calculation
+            target_vals = sorted(temp_df[target].unique())  # [No, Yes]
+            temp_df['target_internal'] = (temp_df[target] == target_vals[1]).astype(int)
+
+            for col in features:
+                try:
+                    iv_score = calc_iv(temp_df, col, 'target_internal')
+
+                    # Interpretation
+                    if iv_score < 0.02:
+                        power = "Useless"
+                    elif iv_score < 0.1:
+                        power = "Weak"
+                    elif iv_score < 0.3:
+                        power = "Medium"
+                    elif iv_score < 0.5:
+                        power = "Strong"
+                    else:
+                        power = "Suspicious (Too Good)"
+
+                    iv_data.append({"Feature": col, "IV Score": round(iv_score, 4), "Power": power})
+                except:
+                    continue
+
+        if iv_data:
+            iv_df = pd.DataFrame(iv_data).sort_values("IV Score", ascending=False)
+
+
+            # Highlight strong features
+            def highlight_strong(val):
+                color = '#d4edda' if val == "Strong" or val == "Suspicious (Too Good)" else ''
+                return f'background-color: {color}'
+
+
+            st.dataframe(iv_df.style.applymap(highlight_strong, subset=['Power']), use_container_width=True)
+        else:
+            st.info("Could not calculate IV (likely data format issues).")
+
+    # B. REGRESSION TARGET: Calculate Correlation
+    else:
+        st.caption("ℹ️ **Correlation Analysis:** Ranks features by linear relationship with Target.")
+        corr_data = []
+        numeric_df = X_train_all.select_dtypes(include=np.number)
+
+        if len(numeric_df.columns) > 0:
+            # Add target back temporarily for correlation
+            numeric_df[target] = y_train_all
+            corr_matrix = numeric_df.corr()
+
+            # Extract correlation with target
+            if target in corr_matrix.columns:
+                target_corr = corr_matrix[target].drop(target)  # Drop self-correlation
+                for col, score in target_corr.items():
+                    if col in features:
+                        power = "Weak"
+                        if abs(score) > 0.5:
+                            power = "Strong"
+                        elif abs(score) > 0.3:
+                            power = "Medium"
+
+                        corr_data.append({"Feature": col, "Correlation": round(score, 4), "Strength": power})
+
+            corr_df = pd.DataFrame(corr_data).sort_values("Correlation", key=abs, ascending=False)
+            st.dataframe(corr_df, use_container_width=True)
+        else:
+            st.info("Target is numeric, but no numeric features found for correlation.")
+
 
 # ------------------ Model Selection ------------------
 with model_container:
@@ -626,74 +740,134 @@ if st.button("Train Model"):
         st.subheader("Confusion Matrix")
         st.dataframe(cm_df)
 
+
+
+
+
     else:
+
         mse = mean_squared_error(y_test, preds)
+
+        r2 = r2_score(y_test, preds)
+
+        # --- Calculate Adjusted R2 ---
+
+        n = len(y_test)
+
+        try:
+
+            # Best method: Ask the model how many features it saw
+
+            p = pipeline.named_steps["model"].n_features_in_
+
+        except AttributeError:
+
+            # Fallback: Transform data and count columns manually
+
+            p = pipeline.named_steps["prep"].transform(X_test).shape[1]
+
+        # Safety Check: Prevent Division by Zero if n <= p + 1
+
+        if n > p + 1:
+
+            adj_r2 = 1 - (1 - r2) * (n - 1) / (n - p - 1)
+
+        else:
+
+            adj_r2 = r2  # Not enough data to penalize, fallback to R2
+
         metrics = {
+
             "MAE": mean_absolute_error(y_test, preds),
+
             "RMSE": np.sqrt(mse),
-            "R2": r2_score(y_test, preds)
+
+            "R2": r2,
+
+            "Adj R2": adj_r2
+
         }
+
         with col1:
+
             st.subheader("Metrics")
 
-            m1, m2, m3 = st.columns(3)
+            m1, m2, m3, m4 = st.columns(4)
 
-            # Dynamic R2 Explanation
+            # 1. R2
+
             r2_val = metrics['R2']
+
             if r2_val > 0.8:
-                r2_msg = "Excellent. Your model captures almost all the patterns."
+                r2_msg = "🌟 Excellent."
+
             elif r2_val > 0.5:
-                r2_msg = "Decent. The model sees the main trend but misses some details."
+                r2_msg = "✅ Decent."
+
             else:
-                r2_msg = "Poor. Your features don't explain the target well."
+                r2_msg = "⚠️ Poor."
 
-            m1.metric(
-                "R² Score",
-                f"{metrics['R2']:.3f}",
-                help=f"**Your Score: {metrics['R2']:.3f}**\n\n{r2_msg}\n(1.0 is perfect, 0.0 is random guessing)."
-            )
+            m1.metric("R² Score", f"{metrics['R2']:.3f}", help=f"{r2_msg}\n(1.0 = Perfect)")
 
-            # Dynamic MAE Explanation
+            # 2. Adj R2
+
+            diff = metrics['R2'] - metrics['Adj R2']
+
+            if metrics['Adj R2'] < 0:
+                adj_msg = "⛔ **Critical:** Model is broken (worse than random)."
+
+            elif diff > 0.10:
+                adj_msg = f"⚠️ **High Bloat:** Score dropped by {diff:.3f}. Too many useless columns."
+
+            elif diff > 0.02:
+                adj_msg = "ℹ️ **Fair:** Slight penalty for extra features."
+
+            else:
+                adj_msg = "✅ **Efficient:** Model uses features well."
+
+            m2.metric("Adj. R²", f"{metrics['Adj R2']:.3f}", help=f"{adj_msg}")
+
+            # 3. MAE (Now Dynamic!)
+
+            target_mean = y_test.mean()
+
             mae_val = metrics['MAE']
-            m2.metric(
-                "MAE",
-                f"{metrics['MAE']:.2f}",
-                help=f"**Real-World Meaning:**\nOn average, every prediction your model makes is off by **+/- {mae_val:.2f}**.\n\nAsk yourself: Can the business tolerate an error of {mae_val:.2f}?"
-            )
 
-            # Dynamic RMSE Explanation
+            # Calculate % error relative to the average target value
+
+            error_pct = (mae_val / target_mean) * 100 if target_mean != 0 else 0
+
+            if error_pct < 10:
+
+                mae_msg = f"🌟 **High Precision:** Predictions are only off by ~{error_pct:.1f}% on average."
+
+            elif error_pct < 20:
+
+                mae_msg = f"✅ **Acceptable:** Predictions are off by ~{error_pct:.1f}%. Good for trends."
+
+            else:
+
+                mae_msg = f"⚠️ **High Error:** Predictions are off by ~{error_pct:.1f}%. Be careful using this for precise planning."
+
+            m3.metric("MAE", f"{metrics['MAE']:.2f}", help=f"{mae_msg}")
+
+            # 4. RMSE (Now Dynamic!)
+
             rmse_val = metrics['RMSE']
-            diff = rmse_val - mae_val
-            if diff > 1.0:
-                rmse_msg = "⚠️ High. This is much higher than MAE, meaning your model occasionally makes HUGE errors."
+
+            gap = rmse_val - mae_val
+
+            # If RMSE is significantly larger than MAE, it means we have outliers
+
+            if gap > (mae_val * 0.5):
+
+                rmse_msg = "⚠️ **Unstable:** RMSE is much higher than MAE. This means your model makes occasional **massive** mistakes (Outliers)."
+
             else:
-                rmse_msg = "✅ Low. This is close to MAE, meaning your model is consistent."
 
-            m3.metric(
-                "RMSE",
-                f"{metrics['RMSE']:.2f}",
-                help=f"**Large Error Penalty:**\n{rmse_msg}\n(RMSE penalizes massive mistakes more than small ones)."
-            )
+                rmse_msg = "✅ **Stable:** RMSE is close to MAE. Your model's errors are consistent."
 
-            st.subheader("Model Summary")
-
-            if metrics["R2"] < 0.4:
-                st.warning("Very weak model — predictions are unreliable.")
-            elif metrics["R2"] < 0.7:
-                st.info("Okay model — usable but improve if possible.")
-            else:
-                st.success("Strong model — predictions are quite reliable.")
-
-            st.subheader("🔎 Model Health Check")
-
-            r2 = metrics["R2"]
-
-            if r2 < 0.4:
-                st.error("❗Low explanatory power — model is not explaining the data well.")
-            elif r2 < 0.7:
-                st.warning("⚠️ Medium strength — good for trends, not precise forecasts.")
-            else:
-                st.success("💡 Strong model — explains most of the variation.")
+            m4.metric("RMSE", f"{metrics['RMSE']:.2f}", help=rmse_msg)
 
         st.markdown("---")
 
