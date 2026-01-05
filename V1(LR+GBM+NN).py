@@ -464,63 +464,112 @@ pipeline = Pipeline([
 
 # ------------------ Train ------------------
 if st.button("Train Model"):
-    # --- AUTO-TUNING BLOCK ---
+    # 1. Train the "Champion" (Default Model)
+    # We always train this first to set a baseline performance
+    with st.spinner("Training Default Model (The Champion)..."):
+        pipeline.fit(X_train, y_train)
+
+        # Calculate Baseline Score (F1 for Binary, R2 for Regression)
+        if is_binary:
+            y_def = pipeline.predict(X_test)
+            if hasattr(pipeline.named_steps["model"], "predict_proba"):
+                # Use default 0.5 threshold for fair comparison during tuning
+                # (We optimize threshold later for the final output)
+                proba_def = pipeline.predict_proba(X_test)[:, 1]
+                y_def = (proba_def >= 0.5).astype(int)
+            baseline_score = f1_score((y_test == sorted(y_test.unique())[1]).astype(int), y_def, zero_division=0)
+            score_name = "F1 Score"
+        else:
+            baseline_score = r2_score(y_test, pipeline.predict(X_test))
+            score_name = "R2 Score"
+
+    # 2. Run the "Challenger" (Hyperparameter Tuning) - ONLY if checked
     if enable_tuning:
-        with st.spinner("⚡ Optimizing Hyperparameters... (This may take up to 60s)"):
-            # RandomizedSearchCV with SAFETY LOCKS (n_jobs=1, fixed seed)
+        with st.spinner("⚡ Challenge Round: AI is trying 10 random configurations..."):
+            # We clone the pipeline so we don't mess up the default one yet
+            from sklearn.base import clone
+
+            tuned_pipeline = clone(pipeline)
+
             search = RandomizedSearchCV(
-                pipeline,
+                tuned_pipeline,
                 param_distributions=param_dist,
                 n_iter=10,
                 cv=3,
                 random_state=42,
                 n_jobs=1,
+                # Optimize for the same metric we measure
                 scoring='f1' if is_binary else 'r2'
             )
+
             try:
                 search.fit(X_train, y_train)
-                pipeline = search.best_estimator_
-                # --- BUSINESS FRIENDLY TRANSLATOR ---
-                best_params = search.best_params_
+                best_model = search.best_estimator_
 
-                # 1. Dictionary to translate computer-speak to Business English
-                translator = {
-                    "model__C": "Strictness (C)",
-                    "model__alpha": "Smoothing (Alpha)",
-                    "model__learning_rate": "Learning Speed",
-                    "model__n_estimators": "Number of Trees",
-                    "model__max_depth": "Max Decision Depth",
-                    "model__num_leaves": "Tree Complexity (Leaves)",
-                    "model__max_leaf_nodes": "Max Tree Branches",
-                    "model__hidden_layer_sizes": "Neural Network Layers",
-                    "model__learning_rate_init": "Initial Learning Speed"
-                }
+                # Evaluate the Challenger on the SAME test set
+                if is_binary:
+                    y_tuned = best_model.predict(X_test)
+                    if hasattr(best_model.named_steps["model"], "predict_proba"):
+                        proba_tuned = best_model.predict_proba(X_test)[:, 1]
+                        y_tuned = (proba_tuned >= 0.5).astype(int)
+                    tuned_score = f1_score((y_test == sorted(y_test.unique())[1]).astype(int), y_tuned, zero_division=0)
+                else:
+                    tuned_score = r2_score(y_test, best_model.predict(X_test))
 
-                # 2. Format the message
-                friendly_msg = []
-                for key, value in best_params.items():
-                    # Get readable name or fallback to key
-                    name = translator.get(key, key.replace("model__", ""))
+                # --- THE DECISION ---
+                if tuned_score > baseline_score:
+                    # Case A: AI Won
+                    pipeline = best_model  # Replace default with new winner
+                    improvement = (tuned_score - baseline_score)
 
-                    # Clean up the number (remove np.float64 wrapper and round)
-                    if isinstance(value, (float, np.floating)):
-                        val_str = f"{value:.4f}"  # Round to 4 decimals
-                    else:
-                        val_str = str(value)
+                    # Business Friendly Message
+                    st.success(f"🎉 **AI Optimization Successful!**")
+                    st.markdown(
+                        f"The AI beat the default settings. **{score_name} improved by {improvement:.3f}** (from {baseline_score:.3f} to {tuned_score:.3f}).")
 
-                    friendly_msg.append(f"**{name}:** {val_str}")
+                    # Print Winning Parameters
+                    best_params = search.best_params_
+                    translator = {
+                        "model__C": "Strictness (C)",
+                        "model__alpha": "Smoothing (Alpha)",
+                        "model__learning_rate": "Learning Speed",
+                        "model__n_estimators": "Number of Trees",
+                        "model__num_leaves": "Tree Complexity",
+                        "model__max_depth": "Max Depth",
+                        "model__hidden_layer_sizes": "Neural Layers",
+                        "model__learning_rate_init": "Init Speed"
+                    }
+                    # --- Format the winning settings (With Rounding) ---
+                    msg = []
+                    for k, v in best_params.items():
+                        # 1. Translate the technical name
+                        name = translator.get(k, k.replace('model__', ''))
 
-                # 3. Print clean success message
-                st.success(f"✅ **Optimization Complete! Best settings found:\n\n" + "  \n".join(
-                    friendly_msg))
+                        # 2. Format the number (Your specific logic)
+                        if isinstance(v, (float, np.floating)):
+                            val_str = f"{v:.4f}"  # Round to 4 decimals
+                        else:
+                            val_str = str(v)
+
+                        msg.append(f"**{name}:** {val_str}")
+
+                    st.info(f"**Winning Settings:** " + ", ".join(msg))
+
+                else:
+                    # Case B: AI Failed (Default was better)
+                    # We do NOT update 'pipeline', so we keep the default model
+                    st.info(f"ℹ️ **Optimization Result:** The default model was already excellent.")
+                    st.markdown(
+                        f"The AI tried 10 variations but none beat the default {score_name} of **{baseline_score:.3f}**. We kept the safe default model.")
+
             except Exception as e:
-                st.error(f"⚠️ Tuning Failed (likely memory). Reverting to default settings. Error: {e}")
-                pipeline.fit(X_train, y_train)
-    else:
-        # Standard fast training (Fallback)
-        pipeline.fit(X_train, y_train)
+                st.error(f"⚠️ Tuning skipped due to error: {e}. Using default model.")
 
-    # default predictions (used for regression)
+    else:
+        # Tuning OFF: Just print that we used the default
+        st.success(f"✅ Trained with Standard Settings ({score_name}: {baseline_score:.3f})")
+
+    # 3. Final Predictions (Using whichever model won)
     preds = pipeline.predict(X_test)
 
     # override class decisions based on threshold
@@ -773,101 +822,103 @@ if st.button("Train Model"):
             adj_r2 = 1 - (1 - r2) * (n - 1) / (n - p - 1)
 
         else:
+            # ---------------------------------------------------------
+            # 1. CALCULATE RAW METRICS
+            # ---------------------------------------------------------
+            mse = mean_squared_error(y_test, preds)
+            r2 = r2_score(y_test, preds)
 
-            adj_r2 = r2  # Not enough data to penalize, fallback to R2
+            # Calculate Adjusted R2 (Correctly counting features)
+            n = len(y_test)
+            try:
+                # Ask the model how many features it actually used
+                p = pipeline.named_steps["model"].n_features_in_
+            except AttributeError:
+                # Fallback for models that don't track this
+                p = pipeline.named_steps["prep"].transform(X_test).shape[1]
 
-        metrics = {
+            # Prevent Division by Zero
+            if n > p + 1:
+                adj_r2 = 1 - (1 - r2) * (n - 1) / (n - p - 1)
+            else:
+                adj_r2 = r2
 
-            "MAE": mean_absolute_error(y_test, preds),
+            metrics = {
+                "MAE": mean_absolute_error(y_test, preds),
+                "RMSE": np.sqrt(mse),
+                "R2": r2,
+                "Adj R2": adj_r2
+            }
 
-            "RMSE": np.sqrt(mse),
+            # ---------------------------------------------------------
+            # 2. GENERATE DYNAMIC HELP MESSAGES (THE INTELLIGENCE)
+            # ---------------------------------------------------------
 
-            "R2": r2,
-
-            "Adj R2": adj_r2
-
-        }
-
-        with col1:
-
-            st.subheader("Metrics")
-
-            m1, m2, m3, m4 = st.columns(4)
-
-            # 1. R2
-
+            # A. R-Squared Logic
             r2_val = metrics['R2']
-
             if r2_val > 0.8:
-                r2_msg = "🌟 Excellent."
-
+                r2_msg = "🌟 **Excellent.** The model explains most of the variation in the target. It captures the patterns very well."
             elif r2_val > 0.5:
-                r2_msg = "✅ Decent."
-
+                r2_msg = "✅ **Decent.** The model sees the main trends, but misses some finer details. Good for general strategy."
             else:
-                r2_msg = "⚠️ Poor."
+                r2_msg = "⚠️ **Poor.** The model is struggling. The features provided do not explain the target well."
 
-            m1.metric("R² Score", f"{metrics['R2']:.3f}", help=f"{r2_msg}\n(1.0 = Perfect)")
-
-            # 2. Adj R2
-
+            # B. Adjusted R-Squared Logic (Bloat Detector)
             diff = metrics['R2'] - metrics['Adj R2']
-
             if metrics['Adj R2'] < 0:
-                adj_msg = "⛔ **Critical:** Model is broken (worse than random)."
-
+                adj_msg = "⛔ **Critical:** The model is worse than random guessing. Your features likely have NO relationship with the target."
             elif diff > 0.10:
-                adj_msg = f"⚠️ **High Bloat:** Score dropped by {diff:.3f}. Too many useless columns."
-
-            elif diff > 0.02:
-                adj_msg = "ℹ️ **Fair:** Slight penalty for extra features."
-
+                adj_msg = f"⚠️ **High Bloat:** Score dropped by {diff:.3f}. You have too many useless columns (Noise) relative to your data size."
+            elif diff > 0.05:
+                adj_msg = "ℹ️ **Fair:** Moderate penalty applied. You might have a few redundant features."
             else:
-                adj_msg = "✅ **Efficient:** Model uses features well."
+                adj_msg = "✅ **Efficient:** The model is healthy. It is not 'stuffed' with junk data."
 
-            m2.metric("Adj. R²", f"{metrics['Adj R2']:.3f}", help=f"{adj_msg}")
-
-            # 3. MAE (Now Dynamic!)
-
+            # C. MAE Logic (Contextual % Error)
             target_mean = y_test.mean()
-
             mae_val = metrics['MAE']
-
-            # Calculate % error relative to the average target value
-
             error_pct = (mae_val / target_mean) * 100 if target_mean != 0 else 0
 
             if error_pct < 10:
-
-                mae_msg = f"🌟 **High Precision:** Predictions are only off by ~{error_pct:.1f}% on average."
-
+                mae_msg = f"🌟 **High Precision:** Predictions are only off by ~{error_pct:.1f}% on average. This is very sharp."
             elif error_pct < 20:
-
-                mae_msg = f"✅ **Acceptable:** Predictions are off by ~{error_pct:.1f}%. Good for trends."
-
+                mae_msg = f"✅ **Acceptable:** Predictions are off by ~{error_pct:.1f}%. This is useful for general forecasting."
             else:
+                mae_msg = f"⚠️ **High Error:** Predictions are off by ~{error_pct:.1f}%. Be careful using this for precise budget planning."
 
-                mae_msg = f"⚠️ **High Error:** Predictions are off by ~{error_pct:.1f}%. Be careful using this for precise planning."
-
-            m3.metric("MAE", f"{metrics['MAE']:.2f}", help=f"{mae_msg}")
-
-            # 4. RMSE (Now Dynamic!)
-
+            # D. RMSE Logic (Outlier Detector)
             rmse_val = metrics['RMSE']
-
             gap = rmse_val - mae_val
-
-            # If RMSE is significantly larger than MAE, it means we have outliers
-
             if gap > (mae_val * 0.5):
-
-                rmse_msg = "⚠️ **Unstable:** RMSE is much higher than MAE. This means your model makes occasional **massive** mistakes (Outliers)."
-
+                rmse_msg = "⚠️ **Unstable:** RMSE is much higher than MAE. This means your model occasionally makes **massive** mistakes (Outliers)."
             else:
+                rmse_msg = "✅ **Stable:** RMSE is close to MAE. The model's errors are consistent and predictable."
 
-                rmse_msg = "✅ **Stable:** RMSE is close to MAE. Your model's errors are consistent."
+            # ---------------------------------------------------------
+            # 3. DISPLAY METRICS (2x2 GRID TO FIX TRUNCATION)
+            # ---------------------------------------------------------
+            with col1:
+                st.subheader("Metrics")
 
-            m4.metric("RMSE", f"{metrics['RMSE']:.2f}", help=rmse_msg)
+                # Row 1
+                row1_col1, row1_col2 = st.columns(2)
+                row1_col1.metric("R² Score", f"{metrics['R2']:.3f}",
+                                 help=f"{r2_msg}\n\n(Scale: 0.0 = Random, 1.0 = Perfect)")
+                row1_col2.metric("Adj. R²", f"{metrics['Adj R2']:.3f}", help=adj_msg)
+
+                # Row 2
+                row2_col1, row2_col2 = st.columns(2)
+                row2_col1.metric("MAE", f"{metrics['MAE']:.2f}", help=f"**Business Meaning:**\n{mae_msg}")
+                row2_col2.metric("RMSE", f"{metrics['RMSE']:.2f}", help=f"**Stability Check:**\n{rmse_msg}")
+
+                st.subheader("Model Summary")
+                if metrics["R2"] < 0.4:
+                    st.warning("Very weak model — predictions are unreliable.")
+                elif metrics["R2"] < 0.7:
+                    st.info("Okay model — usable but improve if possible.")
+                else:
+                    st.success("Strong model — predictions are quite reliable.")
+
 
         st.markdown("---")
 
