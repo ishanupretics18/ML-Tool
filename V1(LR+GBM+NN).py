@@ -119,7 +119,7 @@ features = st.sidebar.multiselect(
 
 
 if ignored_features:
-   st.sidebar.caption(f"⚠️ Auto-deselected {len(ignored_features)} columns (High cardinality/IDs).")
+   st.sidebar.caption(f"⚠️ Auto-deselected {len(ignored_features)} columns (Too Many Unique Values/IDs).")
 
 
 if len(features) == 0:
@@ -612,18 +612,15 @@ if st.button("Train Model"):
             else:
                 st.success("Model looks solid and usable.")
 
-        # recover original class names in correct order
-        labels = list(y_test.unique())  # [neg, pos]
-
-        # Calculate standard CM (Rows=Actual, Cols=Pred)
-        cm = confusion_matrix(y_bin, preds, labels=[0, 1])
+            # Calculate CM with "1" (Yes) first, then "0" (No)
+        cm = confusion_matrix(y_bin, preds, labels=[1, 0])
 
         # --- TRANSPOSE TO SWAP AXES ---
         # Now: Rows = Predicted, Columns = Actual
         cm_df = pd.DataFrame(
-            cm.T,  # <--- .T Transposes the matrix data
-            index=[f"Pred: {classes[0]}", f"Pred: {classes[1]}"],
-            columns=[f"Actual: {classes[0]}", f"Actual: {classes[1]}"]
+            cm.T,
+            index=[f"Pred: {classes[1]}", f"Pred: {classes[0]}"],  # Yes first
+            columns=[f"Actual: {classes[1]}", f"Actual: {classes[0]}"]  # Yes first
         )
 
         st.subheader("Confusion Matrix")
@@ -934,21 +931,25 @@ if st.button("Train Model"):
     # ------------------ Final Refit Strategy & Export ------------------
     st.markdown("---")
 
-    # 1. Base Test Predictions (80/20 split results)
-    out = X_test.copy()
-    out["y_true"] = y_test.values
-    out["y_pred"] = preds
-    out["Row_Type"] = "train_test_split"
+    # 1. Prepare "Train" Data (For reference)
+    train_df = X_train.copy()
+    train_df["y_true"] = y_train.values
+    train_df["y_pred"] = None  # We don't usually predict on train, or you can add pipeline.predict(X_train) here
+    train_df["Row_Type"] = "Train"
+
+    # 2. Prepare "Test" Data (The 20% validation set)
+    test_df = X_test.copy()
+    test_df["y_true"] = y_test.values
+    test_df["y_pred"] = preds
+    test_df["Row_Type"] = "Test"
 
     if is_binary and hasattr(pipeline.named_steps["model"], "predict_proba"):
-        out["y_proba"] = pipeline.predict_proba(X_test)[:, 1]
-        out["Low_Confidence"] = (abs(out["y_proba"] - effective_threshold) <= 0.10)
+        test_df["y_proba"] = pipeline.predict_proba(X_test)[:, 1]
+        test_df["Low_Confidence"] = (abs(test_df["y_proba"] - effective_threshold) <= 0.10)
 
-    # 2. Future Predictions (Refit Logic)
+    # 3. Future Predictions (Refit Logic)
     future_preds = None
     future_proba = None
-
-    # (We use the 'refit_strategy' variable from the Sidebar now)
 
     # Only show this if there is data to predict
     if len(X_to_predict) > 0:
@@ -957,7 +958,6 @@ if st.button("Train Model"):
         if refit_strategy:
             with st.spinner("Retraining on full dataset..."):
                 try:
-                    # Retrain on ALL data
                     pipeline.fit(X_train_all, y_train_all)
                     future_preds = pipeline.predict(X_to_predict)
 
@@ -973,25 +973,29 @@ if st.button("Train Model"):
                 future_proba = pipeline.predict_proba(X_to_predict)[:, 1]
                 future_preds = (future_proba >= effective_threshold).astype(int)
 
-        # 3. Build Final Dataframe
-        if future_preds is not None:
-            future = X_to_predict.copy()
-            future["y_true"] = None
-            future["y_pred"] = future_preds
-            future["Row_Type"] = "prediction"
+    # 4. Build Final Combined Dataframe
+    # Start with Train + Test
+    final_df = pd.concat([train_df, test_df], axis=0)
 
-            if future_proba is not None:
-                future["y_proba"] = future_proba
-                future["Low_Confidence"] = (abs(future["y_proba"] - effective_threshold) < 0.10)
+    # Add Predictions if they exist
+    if future_preds is not None:
+        future = X_to_predict.copy()
+        future["y_true"] = None
+        future["y_pred"] = future_preds
+        future["Row_Type"] = "Predict"  # Labeled as Predict
 
-            out = pd.concat([out, future], axis=0)
+        if future_proba is not None:
+            future["y_proba"] = future_proba
+            future["Low_Confidence"] = (abs(future["y_proba"] - effective_threshold) < 0.10)
 
-    # 4. Download (MUST BE INDENTED inside the button block)
+        final_df = pd.concat([final_df, future], axis=0)
+
+    # Filter if user requested "Predict only"
     if predict_only:
-        out = out[out["Row_Type"] == "prediction"]
+        final_df = final_df[final_df["Row_Type"] == "Predict"]
 
     st.download_button(
-        "Download Predictions CSV",
-        out.to_csv(index=False),
+        "Download Full Data (Train/Test/Predict)",
+        final_df.to_csv(index=False),
         "predictions.csv"
     )
