@@ -979,7 +979,7 @@ if st.button("Train Model"):
    except Exception as e:
        st.error(f"Feature importance could not be calculated: {e}")
 
-# ------------------ Save Outputs ------------------
+    # ------------------ Save Outputs ------------------
     os.makedirs("models", exist_ok=True)
     model_path = f"models/{model_choice.replace(' ', '_')}.joblib"
     joblib.dump(pipeline, model_path)
