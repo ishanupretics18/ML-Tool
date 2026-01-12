@@ -248,9 +248,10 @@ if is_binary:
     # 2. Run IV Loop (Leaderboard)
     iv_data = []
 
-    # REMOVED LIMIT: Now using full dataframe 'df.copy()' instead of 'head(5000)'
+
     with st.spinner("Analyzing feature power (IV) on FULL dataset..."):
-        temp_df = df.copy()
+        # FIX: Only use rows that have a target (ignore prediction rows with NaNs)
+        temp_df = df.loc[train_mask].copy()
 
         target_vals = sorted(temp_df[target].unique())
         # Map target: 1 = Minority/Target, 0 = Majority
