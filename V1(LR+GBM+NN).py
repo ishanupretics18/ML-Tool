@@ -166,11 +166,16 @@ if (is_numeric and unique_count <= 20) or (not is_numeric and unique_count <= 20
     # Determine if Binary (2 classes) or Multi-Class (3+ classes)
     is_binary = (y_train_all.nunique() == 2)
 
-    # Show the mapping so the user knows what happened (e.g., Car=0, Jeep=1)
-    mapping = dict(zip(le.classes_, le.transform(le.classes_)))
-    if "Unknown_Target_For_Encoding" in mapping: del mapping["Unknown_Target_For_Encoding"]
+    # Create a clean dictionary with native Python integers (removes np.int64)
+    mapping = {str(k): int(v) for k, v in zip(le.classes_, le.transform(le.classes_))}
 
-    st.sidebar.success(f"ℹ️ Auto-Encoded Target: {mapping}")
+    if "Unknown_Target_For_Encoding" in mapping:
+        del mapping["Unknown_Target_For_Encoding"]
+
+    # Format as a clean string: "No → 0, Yes → 1"
+    mapping_str = ", ".join([f"**{k}** = {v}" for k, v in mapping.items()])
+
+    st.sidebar.success(f"ℹ️ **Target Mapped:** {mapping_str}")
 
 elif not is_numeric and unique_count > 20:
     # ERROR TRAP: High Cardinality Text
