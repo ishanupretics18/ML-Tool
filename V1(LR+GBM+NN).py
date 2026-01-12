@@ -133,20 +133,24 @@ train_mask = y.notna()
 y_raw = y.loc[train_mask]  # Temp variable to check types
 
 # --- 2. DETECT PROBLEM TYPE & ENCODE TARGET ---
-# Logic: It is Classification if it is Text OR if it is Numeric but has very few unique values (< 20)
-is_classification = False
-is_binary = False
-le = None
 
-# Check type of the TRAINING data
-if not pd.api.types.is_numeric_dtype(y_raw) or y_raw.nunique() <= 20:
+# CHECK 1: Is it numeric?
+is_numeric = pd.api.types.is_numeric_dtype(y_raw)
+unique_count = y_raw.nunique()
+
+# LOGIC:
+# It is Classification ONLY if:
+# 1. It is Numeric AND has few unique values (e.g. 0, 1)
+# 2. OR It is Text AND has few unique values (e.g. "Yes", "No")
+# We assume "few" means <= 20. If it has > 20 text values, it's likely an ID.
+
+if (is_numeric and unique_count <= 20) or (not is_numeric and unique_count <= 20):
     is_classification = True
 
     # Import Encoder
     from sklearn.preprocessing import LabelEncoder
 
     # We must fill NaNs temporarily to allow encoding, then revert mask later
-    # This prevents the encoder from crashing on the rows we intend to predict later
     y_filled = y.fillna("Unknown_Target_For_Encoding")
 
     le = LabelEncoder()
@@ -167,6 +171,15 @@ if not pd.api.types.is_numeric_dtype(y_raw) or y_raw.nunique() <= 20:
     if "Unknown_Target_For_Encoding" in mapping: del mapping["Unknown_Target_For_Encoding"]
 
     st.sidebar.success(f"ℹ️ Auto-Encoded Target: {mapping}")
+
+elif not is_numeric and unique_count > 20:
+    # ERROR TRAP: High Cardinality Text
+    st.error(
+        f"⛔ Target Error: The column '{target}' is text but has {unique_count} unique values.\n\n"
+        "This looks like an ID column (e.g. CustomerID, Name), not a target to predict.\n"
+        "Please select a valid target (like 'Churn' or 'TotalCharges')."
+    )
+    st.stop()
 
 else:
     # Regression Mode (Continuous Numbers)
@@ -772,23 +785,30 @@ if st.button("Train Model"):
             else:
                 st.success("Model performance is solid.")
 
-        # Confusion Matrix (Works for Multi-Class too!)
-        cm = confusion_matrix(y_test, preds)
-        st.subheader("Confusion Matrix")
-        st.write(cm)  # Simple write for multi-class safety, or use DataFrame with le.classes_ if available
-            # Calculate CM with "1" (Yes) first, then "0" (No)
-        cm = confusion_matrix(y_bin, preds, labels=[1, 0])
+            # Confusion Matrix
+            st.subheader("Confusion Matrix")
 
-        # --- TRANSPOSE TO SWAP AXES ---
-        # Now: Rows = Predicted, Columns = Actual
-        cm_df = pd.DataFrame(
-            cm.T,
-            index=[f"Pred: {classes[1]}", f"Pred: {classes[0]}"],  # Yes first
-            columns=[f"Actual: {classes[1]}", f"Actual: {classes[0]}"]  # Yes first
-        )
+            if is_binary:
+                # For Binary, we force a specific order: Yes (1) then No (0)
+                cm = confusion_matrix(y_bin, preds, labels=[1, 0])
+                cm_df = pd.DataFrame(
+                    cm.T,
+                    index=[f"Pred: {classes[1]}", f"Pred: {classes[0]}"],
+                    columns=[f"Actual: {classes[1]}", f"Actual: {classes[0]}"]
+                )
+            else:
+                # For Multi-Class, we use the default order
+                cm = confusion_matrix(y_test, preds)
+                # Try to get class names if encoder exists, otherwise use "Class 0, Class 1..."
+                if 'le' in locals() and le is not None:
+                    labels = [f"Class: {c}" for c in le.classes_]
+                else:
+                    labels = [f"Class: {i}" for i in range(len(cm))]
 
-        st.subheader("Confusion Matrix")
-        st.dataframe(cm_df)
+                cm_df = pd.DataFrame(cm.T, index=[f"Pred: {x}" for x in labels],
+                                     columns=[f"Actual: {x}" for x in labels])
+
+            st.dataframe(cm_df)
 
 
     else:
