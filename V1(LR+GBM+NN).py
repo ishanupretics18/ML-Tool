@@ -125,29 +125,65 @@ if ignored_features:
 if len(features) == 0:
    st.stop()
 
-
 X = df[features]
 y = df[target]
 
-
-# Drop rows where target is NaN (REQUIRED for sklearn)
+# --- 1. HANDLE MISSING TARGETS FIRST ---
 train_mask = y.notna()
+y_raw = y.loc[train_mask]  # Temp variable to check types
 
+# --- 2. DETECT PROBLEM TYPE & ENCODE TARGET ---
+# Logic: It is Classification if it is Text OR if it is Numeric but has very few unique values (< 20)
+is_classification = False
+is_binary = False
+le = None
+
+# Check type of the TRAINING data
+if not pd.api.types.is_numeric_dtype(y_raw) or y_raw.nunique() <= 20:
+    is_classification = True
+
+    # Import Encoder
+    from sklearn.preprocessing import LabelEncoder
+
+    # We must fill NaNs temporarily to allow encoding, then revert mask later
+    # This prevents the encoder from crashing on the rows we intend to predict later
+    y_filled = y.fillna("Unknown_Target_For_Encoding")
+
+    le = LabelEncoder()
+    # Force string conversion to handle mixed types safely
+    y_encoded = le.fit_transform(y_filled.astype(str))
+
+    # Put back into Series with original index
+    y = pd.Series(y_encoded, index=df.index, name=target)
+
+    # Re-calculate train slices with the new encoded numbers
+    y_train_all = y.loc[train_mask]
+
+    # Determine if Binary (2 classes) or Multi-Class (3+ classes)
+    is_binary = (y_train_all.nunique() == 2)
+
+    # Show the mapping so the user knows what happened (e.g., Car=0, Jeep=1)
+    mapping = dict(zip(le.classes_, le.transform(le.classes_)))
+    if "Unknown_Target_For_Encoding" in mapping: del mapping["Unknown_Target_For_Encoding"]
+
+    st.sidebar.success(f"ℹ️ Auto-Encoded Target: {mapping}")
+
+else:
+    # Regression Mode (Continuous Numbers)
+    is_classification = False
+    is_binary = False
+    y_train_all = y.loc[train_mask]
 
 X_train_all = X.loc[train_mask]
-y_train_all = y.loc[train_mask]
 
-# <---SAFETY CHECK STARTS HERE --->
+# <---SAFETY CHECK--->
 if len(X_train_all) < 5:
-    st.error(
-        f"❌ Not enough training data! "
-        f"The target column '{target}' only has {len(X_train_all)} valid (non-empty) rows. "
-        "You need at least 5 rows of data to train a model."
-    )
+    st.error(f"❌ Not enough training data! The target '{target}' has {len(X_train_all)} rows. Need 5+.")
     st.stop()
-# <--- SAFETY CHECK ENDS HERE --->
 
 X_to_predict = X.loc[~train_mask]
+
+is_binary = y_train_all.nunique() == 2
 
 # A. BINARY TARGET: Calculate Information Value (IV) & Drill Down
 if is_binary:
@@ -310,17 +346,19 @@ else:
         st.info("Target is numeric, but no numeric features found for correlation.")
 # ------------------ Model Selection ------------------
 with model_container:
-    if is_binary:
+    # UPDATED: Use 'is_classification' instead of 'is_binary'
+    if is_classification:
         model_choice = st.selectbox(
             "Model",
             ["Logistic Regression", "GBM", "Neural Network"]
         )
-        threshold_mode = st.sidebar.selectbox(
-            "Threshold Mode",
-            ["Manual", "Optimize for Recall", "Optimize for Precision", "Optimize F1"]
-        )
-        threshold = st.sidebar.slider("Decision Threshold", 0.05, 0.95, 0.50, 0.01)
-
+        # Keep threshold stuff for Binary only
+        if is_binary:
+            threshold_mode = st.sidebar.selectbox(
+                "Threshold Mode",
+                ["Manual", "Optimize for Recall", "Optimize for Precision", "Optimize F1"]
+            )
+            threshold = st.sidebar.slider("Decision Threshold", 0.05, 0.95, 0.50, 0.01)
     else:
         model_choice = st.selectbox(
             "Model",
@@ -663,142 +701,55 @@ if st.button("Train Model"):
 
     col1, col2 = st.columns([1, 2])
 
-    if is_binary:
-        if not hasattr(pipeline.named_steps["model"], "predict_proba"):
+    # UPDATED: Handle ALL Classification (Binary OR Multi-Class)
+    if is_classification:
+        # Check for probabilities
+        if hasattr(pipeline.named_steps["model"], "predict_proba"):
+            y_prob = pipeline.predict_proba(X_test)
+            # For Binary, keep the explicit "Column 1" probability for ROC/Thresholds
+            proba = y_prob[:, 1] if is_binary else None
+        else:
             st.warning("This model does not support probability scores.")
             proba = None
 
+        # Determine Averaging Method: 'binary' for Yes/No, 'weighted' for Multi-Class
+        avg_method = 'binary' if is_binary else 'weighted'
+
         metrics = {
-            "Accuracy": accuracy_score(y_bin, preds),
-            "Precision": precision_score(y_bin, preds, zero_division=0),
-            "Recall": recall_score(y_bin, preds, zero_division=0),
-            "F1": f1_score(y_bin, preds, zero_division=0),
-            "ROC AUC": roc_auc_score(y_bin, proba) if proba is not None else "N/A",
+            "Accuracy": accuracy_score(y_test, preds),
+            "Precision": precision_score(y_test, preds, average=avg_method, zero_division=0),
+            "Recall": recall_score(y_test, preds, average=avg_method, zero_division=0),
+            "F1": f1_score(y_test, preds, average=avg_method, zero_division=0),
+            # ROC AUC is tricky for Multi-Class, strictly showing it only for Binary here to be safe
+            "ROC AUC": roc_auc_score(y_test, proba) if (is_binary and proba is not None) else "N/A",
             "Effective Threshold": round(float(effective_threshold), 3) if 'effective_threshold' in locals() else 0.5
         }
 
         with col1:
             st.subheader("Metrics")
 
-            # --- DYNAMIC INTERPRETATION LOGIC ---
-
-            # 1. AUC Logic
-            auc_val = metrics["ROC AUC"]
-            if auc_val == "N/A":
-                auc_msg = "N/A (Model doesn't support probabilities)"
-            elif auc_val > 0.85:
-                auc_msg = "🌟 Excellent. The model is very good at distinguishing Yes from No."
-            elif auc_val > 0.70:
-                auc_msg = "✅ Good. The model is reliable for most predictions."
-            elif auc_val > 0.60:
-                auc_msg = "⚠️ Fair. The model struggles with hard cases."
-            else:
-                auc_msg = "⛔ Poor. The model is barely better than a coin flip (Random Guessing)."
-
-            # 2. Precision Logic (Trust)
-            prec_val = metrics["Precision"]
-            if prec_val > 0.8:
-                prec_msg = "High Trust. When it predicts 'Yes', it's usually right."
-            elif prec_val < 0.5:
-                prec_msg = "⚠️ False Alarm Prone. It predicts 'Yes' too often, leading to wasted effort."
-            else:
-                prec_msg = "Moderate. Expect some false alarms."
-
-            # 3. Recall Logic (Coverage)
-            rec_val = metrics["Recall"]
-            if rec_val > 0.8:
-                rec_msg = "High Coverage. It finds almost all the 'Yes' cases."
-            elif rec_val < 0.5:
-                rec_msg = "⚠️ Missed Opportunities. It is missing more than half of the targets."
-            else:
-                rec_msg = "Moderate. It finds the easy cases but misses harder ones."
-
-            # 4. Accuracy Logic (Context)
-            acc_val = metrics["Accuracy"]
-            if acc_val > 0.90:
-                acc_msg = "🌟 Excellent."
-            elif acc_val > 0.80:
-                acc_msg = "✅ Good."
-            else:
-                acc_msg = "⚠️ Fair/Poor."
-
-            # --- DISPLAY METRICS ---
+            # Display Metrics Grid
             m1, m2 = st.columns(2)
-            m1.metric(
-                "Accuracy",
-                f"{metrics['Accuracy']:.1%}",
-                help=f"**Verdict:** {acc_msg}\n\n**Reality Check:** If your data is imbalanced (e.g. 90% No), high accuracy is meaningless. Check F1 Score instead."
-            )
-            m2.metric(
-                "ROC AUC",
-                f"{auc_val:.3f}" if isinstance(auc_val, float) else auc_val,
-                help=f"**Prediction Power:**\n{auc_msg}\n\n(1.0 = Perfect, 0.5 = Random)"
-            )
+            m1.metric("Accuracy", f"{metrics['Accuracy']:.1%}")
+            m2.metric("F1 Score", f"{metrics['F1']:.3f}", help="Weighted F1 for Multi-Class")
 
             m3, m4 = st.columns(2)
-            m3.metric(
-                "Precision",
-                f"{metrics['Precision']:.1%}",
-                help=f"**Trustworthiness:**\n{prec_msg}\n\n(Precision = True Positives / All Predicted Positives)"
-            )
-            m4.metric(
-                "Recall",
-                f"{metrics['Recall']:.1%}",
-                help=f"**Coverage:**\n{rec_msg}\n\n(Recall = True Positives / All Actual Positives)"
-            )
+            m3.metric("Precision", f"{metrics['Precision']:.1%}")
+            m4.metric("Recall", f"{metrics['Recall']:.1%}")
 
-            # 5. F1 Score Logic (Balance)
-            f1_val = metrics["F1"]
-            if f1_val > 0.8:
-                f1_msg = "🌟 Excellent Balance. The model is strong in both Precision and Recall."
-            elif f1_val > 0.6:
-                f1_msg = "✅ Good. A solid compromise between finding targets and being right."
-            elif f1_val > 0.4:
-                f1_msg = "⚠️ Fair. The model is struggling to balance false alarms vs. missed targets."
-            else:
-                f1_msg = "⛔ Poor. The model is failing to identify the positive class effectively."
-
-            m5, m6 = st.columns(2)
-
-            m5.metric(
-                "F1 Score",
-                f"{metrics['F1']:.3f}",
-                help=f"**Harmonic Mean:**\n{f1_msg}\n\n(This is the most important metric if your data is imbalanced, e.g., fraud detection)."
-            )
-
-            m6.metric(
-                "Threshold",
-                f"{metrics['Effective Threshold']:.2f}",
-                help="If Probability > This Number, we predict 'Yes'."
-            )
-
-            if 'effective_threshold' in locals():
-                st.info(f"Applied decision threshold: {round(float(effective_threshold), 3)}")
-
-            # ---------- AUC WARNING ----------
-            if proba is not None:
-                if auc_val != "N/A" and auc_val < 0.6:
-                    st.warning(
-                        "⚠️ Model may be unreliable (AUC < 0.6). "
-                        "Consider adding features, cleaning data, or trying another model."
-                    )
-
-                # ---------- ROC CURVE ----------
-                from sklearn.metrics import roc_curve
-
-                fpr, tpr, roc_th = roc_curve(y_bin, proba)
-
+            # Only show Binary-Specific Charts if strictly Binary
+            if is_binary and proba is not None:
+                # Restored ROC Plot Logic
+                fpr, tpr, roc_th = roc_curve(y_test, proba)
                 fig_roc, ax_roc = plt.subplots()
 
                 # ROC curve
                 ax_roc.plot(fpr, tpr, label="ROC Curve")
                 ax_roc.plot([0, 1], [0, 1], linestyle="--", color="gray", label="Chance")
 
-                # 🔥 SHOW THRESHOLD POINT
-                # find point closest to chosen effective threshold
+                # Show Threshold Point
                 if 'effective_threshold' in locals():
                     idx = (np.abs(roc_th - effective_threshold)).argmin()
-
                     ax_roc.scatter(
                         fpr[idx],
                         tpr[idx],
@@ -816,14 +767,15 @@ if st.button("Train Model"):
                 plt.close(fig_roc)
 
             st.subheader("Model Summary")
-
-            if metrics["Recall"] < 0.6:
-                st.warning("Low recall — model is missing many positives. Be careful.")
-            elif proba is not None and metrics["ROC AUC"] < 0.7:
-                st.info("Model is weak. Consider adding more features or data.")
+            if metrics["F1"] < 0.6:
+                st.warning("Model is struggling (F1 < 0.6). Check your data.")
             else:
-                st.success("Model looks solid and usable.")
+                st.success("Model performance is solid.")
 
+        # Confusion Matrix (Works for Multi-Class too!)
+        cm = confusion_matrix(y_test, preds)
+        st.subheader("Confusion Matrix")
+        st.write(cm)  # Simple write for multi-class safety, or use DataFrame with le.classes_ if available
             # Calculate CM with "1" (Yes) first, then "0" (No)
         cm = confusion_matrix(y_bin, preds, labels=[1, 0])
 
