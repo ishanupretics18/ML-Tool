@@ -158,13 +158,12 @@ if len(features) == 0:
 
 X = df[features]
 
-y = df[target]  # --- 1. SET UP TRAINING DATA ---
+y = df[target]
 
-y_raw_train = y[train_mask]  # Only valid targets
+y_raw_train = y[train_mask]
 
-X_train_all = X[train_mask]  # Only rows with valid targets
+X_train_all = X[train_mask]
 
-# <--- RESTORED SAFETY CHECK --->
 if len(X_train_all) < 5:
     st.error(f"❌ Not enough training data! The target '{target}' has {len(X_train_all)} valid rows. Need at least 5.")
     st.stop()
@@ -175,49 +174,39 @@ if len(X_train_all) < 5:
 X_to_predict = X[predict_mask]
 
 # --- 3. DETECT PROBLEM TYPE & ENCODE TARGET ---
-
 # We check types ONLY on the valid training data
-
 is_numeric = pd.api.types.is_numeric_dtype(y_raw_train)
-
 unique_count = y_raw_train.nunique()
 
-# Logic: Classification if text OR (numeric AND few values)
 le = None
-if (not is_numeric) or (is_numeric and unique_count <= 20):
 
+# [FIX] CHECK FOR HIGH CARDINALITY TEXT FIRST!
+# If it is text AND has > 20 unique values, stop immediately.
+if (not is_numeric) and (unique_count > 20):
+    st.error(f"⛔ Target Error: '{target}' has {unique_count} unique values. Likely an ID or unique identifier.")
+    st.stop()
+
+# [FIX] If we passed the check above, we proceed safely.
+# Logic: Classification if text OR (numeric AND few values)
+if (not is_numeric) or (is_numeric and unique_count <= 20):
     is_classification = True
 
     # Import Encoder
-
     le = LabelEncoder()
 
-    # Fit ONLY on valid training data (This prevents learning "NaN" as a class)
-
+    # Fit ONLY on valid training data
     y_encoded = le.fit_transform(y_raw_train.astype(str))
 
     # Create the final y_train series
-
     y_train_all = pd.Series(y_encoded, index=y_raw_train.index, name=target)
 
     # Strictly check if it is binary (2 classes)
-
     is_binary = (y_train_all.nunique() == 2)
 
-
-
-elif not is_numeric and unique_count > 20:
-
-    st.error(f"⛔ Target Error: '{target}' has {unique_count} unique values. Likely an ID.")
-
-    st.stop()
-
 else:
-
+    # Regression Logic
     is_classification = False
-
     is_binary = False
-
     y_train_all = y_raw_train  # Use raw numeric values for regression
 
 # A. BINARY TARGET: Calculate Information Value (IV) & Drill Down
