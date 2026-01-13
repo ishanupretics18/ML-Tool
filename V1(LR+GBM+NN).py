@@ -1235,11 +1235,12 @@ if st.button("Train Model"):
                 except Exception as e:
                     pass  # Keep as is if decoding fails
 
-
-    st.write(f"### Final Data ({final_df.shape[0]} rows)")
-    # --- SAVE TO MEMORY ---
-    st.session_state.final_df = final_df
-    st.session_state.model_trained = True
+            # Only run this if final_df was successfully built in the blocks above
+            if 'final_df' in locals():
+                st.write(f"### Final Data ({final_df.shape[0]} rows)")
+                # --- SAVE TO MEMORY ---
+                st.session_state.final_df = final_df
+                st.session_state.model_trained = True
 
 # --- AT THE VERY BOTTOM OF THE SCRIPT (NOT INDENTED) ---
 if st.session_state.model_trained and st.session_state.final_df is not None:
