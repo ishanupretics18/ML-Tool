@@ -740,25 +740,44 @@ if st.button("Train Model"):
 
             # --- RESTORED: Header ---
             st.subheader("Confusion Matrix")
-            # --- FIX: Robust Confusion Matrix ---
+            # --- FIX: Robust Confusion Matrix with Real Labels ---
             if is_binary:
+                # 1. Get the actual string labels for 1 (Pos) and 0 (Neg)
+                if 'le' in locals() and le is not None:
+                    try:
+                        # Inverse transform expects a list/array
+                        label_1 = le.inverse_transform([1])[0]
+                        label_0 = le.inverse_transform([0])[0]
+                    except:
+                        label_1, label_0 = "Class 1", "Class 0"
+                else:
+                    label_1, label_0 = "1", "0"
+
+                # 2. Generate Matrix
+                # Note: Sklearn outputs [[TN, FP], [FN, TP]] for labels=[0, 1]
+                # We force labels=[1, 0] so it aligns with typical business view (Top-Left = TP)
                 cm = confusion_matrix(y_bin, preds, labels=[1, 0])
+
+                # 3. Create DataFrame with proper text tags
+                # Transpose (.T) so Predicted is Rows, Actual is Columns (Matches your visual)
                 cm_df = pd.DataFrame(cm.T,
-                                     index=[f"Pred: {classes[1]}", f"Pred: {classes[0]}"],
-                                     columns=[f"Actual: {classes[1]}", f"Actual: {classes[0]}"])
+                                     index=[f"Pred: {label_1}", f"Pred: {label_0}"],
+                                     columns=[f"Actual: {label_1}", f"Actual: {label_0}"])
             else:
+                # Multi-class Logic
                 if 'le' in locals() and le is not None:
                     known_labels = le.classes_
                     cm = confusion_matrix(y_test, preds, labels=np.arange(len(known_labels)))
-                    label_names = [f"Class: {c}" for c in known_labels]
+                    label_names = [f"{c}" for c in known_labels]
                 else:
                     all_labels = sorted(list(set(y_test) | set(preds)))
                     cm = confusion_matrix(y_test, preds, labels=all_labels)
-                    label_names = [f"Class: {l}" for l in all_labels]
+                    label_names = [f"{l}" for l in all_labels]
 
                 cm_df = pd.DataFrame(cm.T,
                                      index=[f"Pred: {x}" for x in label_names],
                                      columns=[f"Actual: {x}" for x in label_names])
+
             st.dataframe(cm_df)
 
     # ==========================
@@ -957,7 +976,6 @@ if st.button("Train Model"):
                     f"⚠️ **Budgeting Error:** Predictions are wrong by **{mae:.2f}** on average. Can your business margin handle this variance?")
 
         # ======================================
-        # ======================================
         # FEATURE IMPORTANCE (UNIFIED & AUTOMATED)
         # ======================================
         st.markdown("---")
@@ -967,45 +985,45 @@ if st.button("Train Model"):
             final_model = pipeline.named_steps["model"]
 
             # ------------------------------------------------------
-            # 1) Native Importance (GBM / Random Forest / Decision Trees)
+            # 1) Native Importance (LightGBM / Random Forest / Decision Trees)
             # ------------------------------------------------------
             if hasattr(final_model, "feature_importances_"):
                 importances = final_model.feature_importances_
 
-                # [FIX 1] Robust Feature Naming
+                # [FROM CODE 1] Robust Feature Naming for OHE (Cleaner)
                 try:
-                    names = pipeline.named_steps["prep"].get_feature_names_out()
+                    raw_names = pipeline.named_steps["prep"].get_feature_names_out()
+                    # Clean the names (Remove 'cat__' and 'num__' prefixes)
+                    names = [n.replace('cat__', '').replace('num__', '') for n in raw_names]
                 except:
                     names = [f"Feat_{i}" for i in range(len(importances))]
 
-                # [FIX 1] Length Safety Check (Crucial for OHE/Drop/Passthrough)
+                # [FROM CODE 2] Safety Check
                 if len(names) != len(importances):
                     names = [f"Feat_{i}" for i in range(len(importances))]
 
                 fi = pd.DataFrame({"Feature": names, "Importance": importances})
 
-                # [FIX 2] Numerical Stability for "Useless" features
+                # [FROM CODE 2] Optimization Diagnostics
                 useless = fi[fi["Importance"] <= 1e-6]
 
                 if len(useless) > 0:
                     high_card_culprits = []
-                    for c in cat_cols:
-                        if c in df.columns:
-                            unique_count = df[c].nunique()
-                            if unique_count > 20:
-                                # [FIX 3] Wording Accuracy
-                                high_card_culprits.append(f"{c} (~{unique_count} unique val)")
+                    # Check for high cardinality text columns causing bloat
+                    for c in df.select_dtypes(include=['object']).columns:
+                        if df[c].nunique() > 20:
+                            high_card_culprits.append(f"{c} ({df[c].nunique()} unique)")
 
                     warning_msg = (
                         f"⚠️ **Optimization Tip:** Found **{len(useless)} features** with ~0 importance.\n"
+                        f"**Features to consider dropping:** {', '.join(useless['Feature'].tolist()[:10])}"
+                    # Limit to first 10 for display
                     )
-                    warning_msg += f"\n**Features to Remove:** {', '.join(useless['Feature'].tolist())}\n\n"
+                    if len(useless) > 10: warning_msg += "..."
 
                     if high_card_culprits:
-                        warning_msg += "**Likely Cause (High Cardinality columns):**\n- "
-                        warning_msg += "\n- ".join(high_card_culprits)
-                    else:
-                        warning_msg += "These features simply didn't help the model learn anything. You can safely drop them."
+                        warning_msg += "\n\n**Likely Cause (High Cardinality columns):**\n- " + "\n- ".join(
+                            high_card_culprits)
 
                     st.warning(warning_msg)
                 else:
@@ -1018,15 +1036,14 @@ if st.button("Train Model"):
                 ax_imp.barh(fi["Feature"], fi["Importance"], color="#4b72af")
                 ax_imp.set_title(f"Native Importance ({model_choice})")
                 ax_imp.set_xlabel("Relative Importance (Gain)")
-                st.pyplot(fig_imp, clear_figure=True)  # [FIX 4] Clear figure explicitly
+                st.pyplot(fig_imp, clear_figure=True)
 
             # ------------------------------------------------------
-            # 2) Permutation Importance (Linear / Logistic / NN)
+            # 2) Permutation Importance (Linear / Logistic / NN / HistGBM)
             # ------------------------------------------------------
             else:
-                with st.spinner("Calculating Permutation Importance..."):
-                    # Note: We pass the PIPELINE and X_TEST (raw data).
-                    # Therefore, importance corresponds to RAW COLUMNS, not transformed ones.
+                st.info("ℹ️ Calculating **Permutation Importance** (Measures impact of the *Original* Columns).")
+                with st.spinner("Calculating Feature Importance..."):
                     result = permutation_importance(
                         pipeline,
                         X_test,
@@ -1042,29 +1059,26 @@ if st.button("Train Model"):
                 fi = pd.DataFrame({"Feature": names, "Importance": imp})
                 fi = fi.sort_values(by="Importance", ascending=True)
 
-                # [FIX 5] Less aggressive negative threshold
+                # [FROM CODE 2] Negative Importance Check
                 weak = fi[fi["Importance"] < -1e-4]
                 if len(weak) > 0:
                     st.warning(
                         "⚠️ **Optimization Tip:** These features seem to be hurting accuracy (Importance < 0).\n"
-                        "Consider removing them to improve the model:\n\n"
-                        f"**{', '.join(list(weak['Feature']))}**"
+                        f"**Consider removing:** {', '.join(list(weak['Feature']))}"
                     )
                 else:
-                    st.success("✅ All features are contributing positively! No drops needed.")
+                    st.success("✅ All features are contributing positively!")
 
-                st.caption("ℹ️ Permutation importance reflects raw input columns (before encoding).")
                 fig_perm, ax_perm = plt.subplots(figsize=(10, 6))
-                colors = ["#e53935" if v <= 0 else "#4caf50" for v in fi["Importance"]]
+                colors = ["#e53935" if v < 0 else "#4caf50" for v in fi["Importance"]]
 
                 ax_perm.barh(fi["Feature"], fi["Importance"], color=colors)
-                ax_perm.set_title("Permutation Importance")
+                ax_perm.set_title("Permutation Importance (Original Features)")
                 ax_perm.set_xlabel("Performance Drop if Shuffled")
                 st.pyplot(fig_perm, clear_figure=True)
 
         except Exception as e:
             st.error(f"Feature importance could not be calculated: {e}")
-
         # ------------------ Save Outputs ------------------
         os.makedirs("models", exist_ok=True)
         model_path = f"models/{model_choice.replace(' ', '_')}.joblib"
