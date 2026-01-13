@@ -27,7 +27,8 @@ from sklearn.metrics import (
    confusion_matrix
 )
 
-
+if 'final_df' not in st.session_state:
+    st.session_state.final_df = None
 # Try LightGBM
 try:
    import lightgbm as lgb
@@ -362,11 +363,13 @@ with model_container:
             ["Logistic Regression", "GBM", "Neural Network"]
         )
         # Keep threshold stuff for Binary only
+        # Keep threshold stuff for Binary only
         if is_binary:
             threshold_mode = st.sidebar.selectbox(
                 "Threshold Mode",
                 ["Manual", "Optimize for Recall", "Optimize for Precision", "Optimize F1"]
             )
+            # This slider must always exist for 'Manual' mode to work
             threshold = st.sidebar.slider("Decision Threshold", 0.05, 0.95, 0.50, 0.01)
     else:
         model_choice = st.selectbox(
@@ -427,80 +430,39 @@ preprocessor = ColumnTransformer([
 # ------------------ Train/Test ------------------
 test_size = st.sidebar.slider("Test size (%)", 10, 40, 20)
 
-
-# ------------------ Automated Imbalance Handling (Visualized) ------------------
+# ------------------ Automated & Manual Imbalance Handling ------------------
 if is_binary:
-   st.sidebar.markdown("---")
-   st.sidebar.subheader("⚖️ Imbalance Handling")
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("⚖️ Imbalance Handling")
 
+    # Calculate actual ratio
+    actual_ratio = y_train_all.value_counts(normalize=True).min()
 
-   # --- 1. SETTINGS & AUTOMATION ---
+    # RESTORED: Manual Override Checkbox
+    manual_balance = st.sidebar.checkbox("Force Manual Balancing", value=False,
+                                         help="Force 'balanced' weights even if data seems okay.")
 
+    user_threshold = st.sidebar.slider(
+        "Auto-balance Threshold (%)", 5, 50, 15
+    ) / 100.0
 
-   # User decides threshold
-   user_threshold = st.sidebar.slider(
-       "Auto-balance Threshold (%)",
-       min_value=5,
-       max_value=50,
-       value=15,
-       help="If the minority class is smaller than this %, balancing will happen automatically."
-   ) / 100.0
+    # Logic: Active if below threshold OR manual check
+    handle_imbalance = (actual_ratio < user_threshold) or manual_balance
 
+    # Visual confirmation table
+    counts = y_train_all.value_counts()
+    balance_df = pd.DataFrame({
+        "Count": counts,
+        "Percentage": (y_train_all.value_counts(normalize=True) * 100).round(1).astype(str) + "%"
+    })
+    st.sidebar.dataframe(balance_df, use_container_width=True)
 
-   # Calculate actual ratio
-   counts = y_train_all.value_counts()
-   actual_ratio = y_train_all.value_counts(normalize=True).min()
-
-
-   # Logic to decide if we force it ON or let user choose
-   is_auto_enabled = False
-
-
-   if actual_ratio < user_threshold:
-       st.sidebar.warning(f"⚠️ Imbalance Detected! (Minority: {round(actual_ratio * 100, 1)}%)")
-       handle_imbalance = True
-       is_auto_enabled = True
-   else:
-       # Case B: Data is safe -> AUTOMATICALLY OFF (No Toggle shown)
-       st.sidebar.success(f"Data is balanced. (Minority: {round(actual_ratio * 100, 1)}%)")
-       st.sidebar.info("✅ Balancing: **OFF (Auto-Decided)**")
-       handle_imbalance = False
-
-
-   # --- 2. VISUAL CONFIRMATION ---
-
-
-   st.sidebar.markdown("#### 📊 Current Class Distribution")
-
-
-   # Create a clean DataFrame for display
-   balance_df = pd.DataFrame({
-       "Count": counts,
-       "Percentage": (y_train_all.value_counts(normalize=True) * 100).round(1).astype(str) + "%"
-   })
-
-
-   # Show Table
-   st.sidebar.dataframe(balance_df, use_container_width=True)
-
-
-   # --- 3. FINAL STATUS INDICATOR ---
-   st.sidebar.markdown("#### 🛠️ Status")
-
-
-   if handle_imbalance:
-       if is_auto_enabled:
-           st.sidebar.success("✅ Balancing: **ACTIVE (Auto-Forced)**")
-       else:
-           st.sidebar.success("✅ Balancing: **ACTIVE (Manual)**")
-   else:
-       st.sidebar.info("ℹ️ Balancing: **OFF**")
-
-
+    if handle_imbalance:
+        st.sidebar.success(f"✅ Balancing: ACTIVE {'(Manual)' if manual_balance else '(Auto)'}")
+    else:
+        st.sidebar.info("ℹ️ Balancing: OFF")
 else:
-   # Not binary? Turn it off implicitly.
-   handle_imbalance = False
-
+    handle_imbalance = False
 
 X_train, X_test, y_train, y_test = train_test_split(
    X_train_all, y_train_all, test_size=test_size / 100, random_state=42
@@ -1168,10 +1130,20 @@ if st.button("Train Model"):
             st.info("Displaying/Downloading 'Predict' rows only.")
 
         st.write(f"### Final Data ({final_df.shape[0]} rows)")
-        st.dataframe(final_df.head())
+        # --- SAVE TO MEMORY ---
+        st.session_state.final_df = final_df
 
+    # --- PERSISTENT DOWNLOAD SECTION (Outside the Train Button) ---
+    if st.session_state.final_df is not None:
+        st.markdown("---")
+        st.subheader("📥 Export Predictions")
+        st.write(f"Showing results for {st.session_state.final_df.shape[0]} rows")
+        st.dataframe(st.session_state.final_df.head())
+
+        csv_data = st.session_state.final_df.to_csv(index=False)
         st.download_button(
-            "Download Full Data (Train/Test/Predict)",
-            final_df.to_csv(index=False),
-            "predictions.csv"
+            label="Download Full Data (Train/Test/Predict)",
+            data=csv_data,
+            file_name="ml_strategy_results.csv",
+            mime="text/csv"
         )
