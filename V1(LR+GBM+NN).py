@@ -1243,7 +1243,7 @@ if st.button("Train Model"):
                 st.session_state.model_trained = True
 
 # --- AT THE VERY BOTTOM OF THE SCRIPT (NOT INDENTED) ---
-if st.session_state.model_trained and st.session_state.final_df is not None:
+if st.session_state.get('model_trained') and st.session_state.get('final_df') is not None:
     st.markdown("---")
     st.subheader("📥 Export Predictions")
 
