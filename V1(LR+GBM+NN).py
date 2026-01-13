@@ -29,6 +29,8 @@ from sklearn.metrics import (
 
 if 'final_df' not in st.session_state:
     st.session_state.final_df = None
+if 'model_trained' not in st.session_state:
+    st.session_state.model_trained = False
 # Try LightGBM
 try:
    import lightgbm as lgb
@@ -1234,19 +1236,20 @@ if st.button("Train Model"):
                     pass  # Keep as is if decoding fails
 
 
-        st.write(f"### Final Data ({final_df.shape[0]} rows)")
-        # --- SAVE TO MEMORY ---
-        st.session_state.final_df = final_df
-# --- PERSISTENT DOWNLOAD SECTION (Outside the Train Button) ---
-if st.session_state.final_df is not None:
+    st.write(f"### Final Data ({final_df.shape[0]} rows)")
+    # --- SAVE TO MEMORY ---
+    st.session_state.final_df = final_df
+    st.session_state.model_trained = True
+
+# --- AT THE VERY BOTTOM OF THE SCRIPT (NOT INDENTED) ---
+if st.session_state.model_trained and st.session_state.final_df is not None:
     st.markdown("---")
     st.subheader("📥 Export Predictions")
-    st.write(f"Showing results for {st.session_state.final_df.shape[0]} rows")
-    st.dataframe(st.session_state.final_df.head())
 
     csv_data = st.session_state.final_df.to_csv(index=False)
     st.download_button(
         label="Download Full Data (Train/Test/Predict)",
         data=csv_data,
         file_name="ml_strategy_results.csv",
-        mime="text/csv")
+        mime="text/csv"
+    )
