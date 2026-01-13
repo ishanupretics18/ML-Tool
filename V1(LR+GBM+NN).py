@@ -196,7 +196,7 @@ if len(X_train_all) < 5:
 X_to_predict = X.loc[~train_mask]
 
 # A. BINARY TARGET: Calculate Information Value (IV) & Drill Down
-if is_binary:
+if is_classification:
     st.caption("ℹ️ **Information Value (IV):** Ranks features by how well they split 'Yes' vs 'No'.")
 
 
@@ -431,7 +431,7 @@ preprocessor = ColumnTransformer([
 test_size = st.sidebar.slider("Test size (%)", 10, 40, 20)
 
 # ------------------ Automated & Manual Imbalance Handling ------------------
-if is_binary:
+if is_classification:
     st.sidebar.markdown("---")
     st.sidebar.subheader("⚖️ Imbalance Handling")
 
