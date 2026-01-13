@@ -1239,14 +1239,16 @@ if st.button("Train Model"):
             except Exception as e:
                 st.warning(f"Label decoding skipped: {e}")
     # ===========================
+    # ===========================
     # FINAL GUARANTEE (CRITICAL)
     # ===========================
     if "final_df" in locals():
         st.session_state.final_df = final_df
         st.session_state.model_trained = True
-        st.write(f"### Final Data ({final_df.shape[0]} rows)")
 
-    st.write(f"### Final Data ({final_df.shape[0]} rows)")
+    # SAFE DISPLAY (uses session_state)
+    if st.session_state.get("final_df") is not None:
+        st.write(f"### Final Data ({st.session_state.final_df.shape[0]} rows)")
 
 # --- AT THE VERY BOTTOM OF THE SCRIPT (NOT INDENTED) ---
 if st.session_state.get('model_trained') and st.session_state.get('final_df') is not None:
