@@ -1018,32 +1018,51 @@ if st.button("Train Model"):
         perm_df = perm_df.sort_values("Perm_Importance", ascending=False)
 
         # ==========================
-        # STEP 2️⃣ — STRUCTURAL BELIEF
+        # ==========================
+        # STEP 2️⃣ — MODEL INTERNALS (ADVANCED)
         # ==========================
         struct_df = None
         struct_type = None
 
-        try:
-            raw_names = pipeline.named_steps["prep"].get_feature_names_out()
-            clean_names = [n.replace("num__", "").replace("cat__", "") for n in raw_names]
-        except:
-            clean_names = None
+        with st.expander("🔬 Advanced Diagnostics: Model Internal Importance"):
+            st.warning(
+                "⚠️ **Diagnostic Only — Do NOT use for business decisions.**\n\n"
+                "This shows how the model internally used features (splits / coefficients).\n"
+                "Models often overweight correlated or high-cardinality features.\n\n"
+                "**Ground truth remains Permutation Importance above.**"
+            )
 
-        if hasattr(final_model, "feature_importances_"):
-            struct_df = pd.DataFrame({
-                "Feature": clean_names if clean_names else [f"Feat_{i}" for i in
-                                                            range(len(final_model.feature_importances_))],
-                "Struct_Importance": final_model.feature_importances_
-            })
-            struct_type = "Tree Split Importance"
+            try:
+                raw_names = pipeline.named_steps["prep"].get_feature_names_out()
+                clean_names = [n.replace("num__", "").replace("cat__", "") for n in raw_names]
+            except:
+                clean_names = None
 
-        elif hasattr(final_model, "coef_"):
-            coef = final_model.coef_[0] if final_model.coef_.ndim > 1 else final_model.coef_
-            struct_df = pd.DataFrame({
-                "Feature": clean_names if clean_names else [f"Feat_{i}" for i in range(len(coef))],
-                "Struct_Importance": np.abs(coef)
-            })
-            struct_type = "Coefficient Magnitude"
+            if hasattr(final_model, "feature_importances_"):
+                struct_df = pd.DataFrame({
+                    "Feature": clean_names if clean_names else
+                    [f"Feat_{i}" for i in range(len(final_model.feature_importances_))],
+                    "Struct_Importance": final_model.feature_importances_
+                })
+                struct_type = "Tree Split Importance"
+
+            elif hasattr(final_model, "coef_"):
+                coef = final_model.coef_[0] if final_model.coef_.ndim > 1 else final_model.coef_
+                struct_df = pd.DataFrame({
+                    "Feature": clean_names if clean_names else
+                    [f"Feat_{i}" for i in range(len(coef))],
+                    "Struct_Importance": np.abs(coef)
+                })
+                struct_type = "Coefficient Magnitude"
+
+            if struct_df is not None:
+                st.caption(f"Internal method used: **{struct_type}**")
+                st.dataframe(
+                    struct_df.sort_values("Struct_Importance", ascending=False).head(20),
+                    use_container_width=True
+                )
+            else:
+                st.info("This model does not expose native feature importance.")
 
         # ======================================================
         # STEP 3️⃣ — DISAGREEMENT & RISK DETECTION ENGINE
