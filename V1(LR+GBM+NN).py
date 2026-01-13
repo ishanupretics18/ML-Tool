@@ -162,12 +162,12 @@ y = df[target]  # --- 1. SET UP TRAINING DATA ---
 
 y_raw_train = y[train_mask]  # Only valid targets
 
-X_train_all = X[train_mask]  # Only rows with valid targets# <--- RESTORED SAFETY CHECK --->if len(X_train_all) < 5:
+X_train_all = X[train_mask]  # Only rows with valid targets
 
-st.error(f"❌ Not enough training data! The target '{target}' has {len(X_train_all)} valid rows. Need at least 5.")
-
-st.stop()
-
+# <--- RESTORED SAFETY CHECK --->
+if len(X_train_all) < 5:
+    st.error(f"❌ Not enough training data! The target '{target}' has {len(X_train_all)} valid rows. Need at least 5.")
+    st.stop()
 # --- 2. SET UP PREDICTION DATA ---
 
 # These are the rows where Target was NaN
