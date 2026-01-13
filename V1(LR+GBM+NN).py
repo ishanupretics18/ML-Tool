@@ -565,171 +565,134 @@ if st.button("Train Model"):
     with st.spinner("Training Default Model (The Champion)..."):
         pipeline.fit(X_train, y_train)
 
-        # Calculate Baseline Score (F1 for Binary, R2 for Regression)
-        if is_binary:
-            y_def = pipeline.predict(X_test)
-            if hasattr(pipeline.named_steps["model"], "predict_proba"):
-                # Use default 0.5 threshold for fair comparison during tuning
-                # (We optimize threshold later for the final output)
-                proba_def = pipeline.predict_proba(X_test)[:, 1]
-                y_def = (proba_def >= 0.5).astype(int)
-            baseline_score = f1_score((y_test == sorted(y_test.unique())[1]).astype(int), y_def, zero_division=0)
+        # --- FIX: Correct Scoring Logic ---
+        # We split Classification vs Regression immediately
+        if is_classification:
+            y_pred_def = pipeline.predict(X_test)
+            score_avg = 'binary' if is_binary else 'weighted'
+            baseline_score = f1_score(y_test, y_pred_def, average=score_avg, zero_division=0)
             score_name = "F1 Score"
         else:
+            # Regression Mode
             baseline_score = r2_score(y_test, pipeline.predict(X_test))
             score_name = "R2 Score"
 
     # 2. Run the "Challenger" (Hyperparameter Tuning) - ONLY if checked
     if enable_tuning:
-        # --- A. PREPARE PROGRESS VISUALS ---
         progress_bar = st.progress(0)
         status_text = st.empty()
         status_text.write(f"⚡ Challenge Round: Preparing to test {tuning_iter} configurations...")
 
-        # We clone the pipeline so we don't mess up the default one yet
         from sklearn.base import clone
 
         tuned_pipeline = clone(pipeline)
 
+        # Fix scoring param based on type
+        if is_classification:
+            tune_metric = 'f1' if is_binary else 'f1_weighted'
+        else:
+            tune_metric = 'r2'
+
         search = RandomizedSearchCV(
             tuned_pipeline,
             param_distributions=param_dist,
-            n_iter=tuning_iter,  # <--- CONNECTED TO SLIDER
+            n_iter=tuning_iter,
             cv=3,
             random_state=42,
-            n_jobs=1,  # <--- CRITICAL: Keeps RAM usage low to prevent crashes
-            scoring='f1' if is_binary else 'r2'
+            n_jobs=1,
+            scoring=tune_metric
         )
 
         try:
-            # 1. Fake progress loop to keep user engaged (since scikit-learn blocks execution)
             import time
 
             status_text.write(f"⚡ AI is training {tuning_iter} models... This may take a moment.")
             progress_bar.progress(10)
 
-            # 2. The Heavy Lifting (This is where it might crash)
             search.fit(X_train, y_train)
 
-            # 3. Success!
             progress_bar.progress(100)
             status_text.success("✅ Tuning Complete!")
-            time.sleep(0.5)  # Pause briefly so user sees the 100%
-            progress_bar.empty()  # Clear the bar
+            time.sleep(0.5)
+            progress_bar.empty()
             status_text.empty()
 
             best_model = search.best_estimator_
 
-            # Evaluate the Challenger on the SAME test set
-            if is_binary:
+            # Evaluate Challenger
+            if is_classification:
                 y_tuned = best_model.predict(X_test)
-                if hasattr(best_model.named_steps["model"], "predict_proba"):
-                    proba_tuned = best_model.predict_proba(X_test)[:, 1]
-                    y_tuned = (proba_tuned >= 0.5).astype(int)
-                tuned_score = f1_score((y_test == sorted(y_test.unique())[1]).astype(int), y_tuned, zero_division=0)
+                score_avg = 'binary' if is_binary else 'weighted'
+                tuned_score = f1_score(y_test, y_tuned, average=score_avg, zero_division=0)
             else:
                 tuned_score = r2_score(y_test, best_model.predict(X_test))
 
             # --- THE DECISION ---
             if tuned_score > baseline_score:
-                # Case A: AI Won
-                pipeline = best_model  # Replace default with new winner
+                pipeline = best_model
                 improvement = (tuned_score - baseline_score)
-
-                # Business Friendly Message
                 st.success(f"🎉 **AI Optimization Successful!**")
                 st.markdown(
                     f"The AI beat the default settings. **{score_name} improved by {improvement:.3f}** (from {baseline_score:.3f} to {tuned_score:.3f}).")
 
-                # Print Winning Parameters
                 best_params = search.best_params_
                 translator = {
-                    "model__C": "Strictness (C)",
-                    "model__alpha": "Smoothing (Alpha)",
-                    "model__learning_rate": "Learning Speed",
-                    "model__n_estimators": "Number of Trees",
-                    "model__num_leaves": "Tree Complexity",
-                    "model__max_depth": "Max Depth",
-                    "model__hidden_layer_sizes": "Neural Layers",
-                    "model__learning_rate_init": "Init Speed"
+                    "model__C": "Strictness (C)", "model__alpha": "Smoothing (Alpha)",
+                    "model__learning_rate": "Learning Speed", "model__n_estimators": "Number of Trees",
+                    "model__num_leaves": "Tree Complexity", "model__max_depth": "Max Depth",
+                    "model__hidden_layer_sizes": "Neural Layers", "model__learning_rate_init": "Init Speed"
                 }
-
-                # --- Format the winning settings (With Rounding) ---
                 msg = []
                 for k, v in best_params.items():
                     name = translator.get(k, k.replace('model__', ''))
-                    if isinstance(v, (float, np.floating)):
-                        val_str = f"{v:.4f}"  # Round to 4 decimals
-                    else:
-                        val_str = str(v)
+                    val_str = f"{v:.4f}" if isinstance(v, (float, np.floating)) else str(v)
                     msg.append(f"**{name}:** {val_str}")
-
                 st.info(f"**Winning Settings:** " + ", ".join(msg))
-
             else:
-                # Case B: AI Failed (Default was better)
                 st.info(f"ℹ️ **Optimization Result:** The default model was already excellent.")
                 st.markdown(
                     f"The AI tried {tuning_iter} variations but none beat the default {score_name} of **{baseline_score:.3f}**. We kept the safe default model.")
 
         except MemoryError:
-            # SPECIFIC CATCH: Ran out of RAM
-            st.error("⛔ **Server Overload:** The dataset is too large to tune with these settings.")
-            st.warning(
-                "Try reducing the 'Tuning Intensity' slider or switching to a simpler model (like Linear Regression).")
+            st.error("⛔ **Server Overload:** The dataset is too large to tune.")
             progress_bar.empty()
             status_text.empty()
-
         except Exception as e:
-            # GENERAL CATCH: Any other crash
-            st.error(f"⚠️ Tuning skipped due to an unexpected error: {e}")
-            st.info("Using the default model instead.")
+            st.error(f"⚠️ Tuning skipped due to error: {e}")
             progress_bar.empty()
             status_text.empty()
-
     else:
-        # Tuning OFF
         st.success(f"✅ Trained with Standard Settings ({score_name}: {baseline_score:.3f})")
 
-    # 3. Final Predictions (Using whichever model won)
+    # 3. Final Predictions
     preds = pipeline.predict(X_test)
 
-
-
-    # override class decisions based on threshold
+    # --- Threshold Logic (Binary Only) ---
     if is_binary and hasattr(pipeline.named_steps["model"], "predict_proba"):
-        # Sort unique values to ensure 0 is first, 1 is second consistently
         classes = sorted(y_test.unique())
         y_bin = (y_test == classes[1]).astype(int)
-
         proba = pipeline.predict_proba(X_test)[:, 1]
+
         from sklearn.metrics import precision_recall_curve
 
         if threshold_mode == "Manual":
             best_threshold = threshold
         else:
             precisions, recalls, ths = precision_recall_curve(y_bin, proba)
-
             if threshold_mode == "Optimize for Recall":
                 idx = recalls.argmax()
-                best_threshold = ths[idx]
             elif threshold_mode == "Optimize for Precision":
                 idx = precisions.argmax()
-                best_threshold = ths[idx]
-            else:  # Optimize F1
+            else:
                 f1_scores = 2 * (precisions * recalls) / (precisions + recalls + 1e-9)
                 idx = f1_scores.argmax()
-                best_threshold = ths[idx]
+            best_threshold = ths[idx] if idx < len(ths) else 0.5
 
             st.info(f"Using optimized threshold: {round(float(best_threshold), 3)}")
 
         effective_threshold = float(best_threshold)
-
-        # FINAL PREDICTIONS
         preds = (proba >= effective_threshold).astype(int)
 
-    # <--- FIXED: This elif is now perfectly aligned with the 'if' above it
-    # Fallback for binary models without predict_proba (rare)
     elif is_binary:
         classes = sorted(y_test.unique())
         y_bin = (y_test == classes[1]).astype(int)
@@ -738,28 +701,22 @@ if st.button("Train Model"):
 
     col1, col2 = st.columns([1, 2])
 
-    # UPDATED: Handle ALL Classification (Binary OR Multi-Class)
+    # ==========================
+    # CLASSIFICATION OUTPUTS
+    # ==========================
     if is_classification:
-        # Check for probabilities
         if hasattr(pipeline.named_steps["model"], "predict_proba"):
-            y_prob = pipeline.predict_proba(X_test)
-            # For Binary, keep the explicit "Column 1" probability for ROC/Thresholds
-            proba = y_prob[:, 1] if is_binary else None
+            y_prob_full = pipeline.predict_proba(X_test)
+            proba = y_prob_full[:, 1] if is_binary else None
         else:
             st.warning("This model does not support probability scores.")
             proba = None
 
-        # Determine Averaging Method: 'binary' for Yes/No, 'weighted' for Multi-Class
-        # NEW ROBUST LOGIC:
-        # Check if the Test set strictly implies binary, or if the model predictions are binary
-        unique_test_labels = np.unique(y_test)
-        unique_pred_labels = np.unique(preds)
-
-        # It is only binary if BOTH test data and predictions have <= 2 unique values
-        if len(unique_test_labels) <= 2 and len(unique_pred_labels) <= 2:
+        unique_test = np.unique(y_test)
+        unique_pred = np.unique(preds)
+        if len(unique_test) <= 2 and len(unique_pred) <= 2:
             avg_method = 'binary'
         else:
-            # Fallback to weighted if a 3rd ghost class appeared in test data
             avg_method = 'weighted'
 
         metrics = {
@@ -767,49 +724,28 @@ if st.button("Train Model"):
             "Precision": precision_score(y_test, preds, average=avg_method, zero_division=0),
             "Recall": recall_score(y_test, preds, average=avg_method, zero_division=0),
             "F1": f1_score(y_test, preds, average=avg_method, zero_division=0),
-            # ROC AUC is tricky for Multi-Class, strictly showing it only for Binary here to be safe
             "ROC AUC": roc_auc_score(y_test, proba) if (is_binary and proba is not None) else "N/A",
             "Effective Threshold": round(float(effective_threshold), 3) if 'effective_threshold' in locals() else 0.5
         }
 
         with col1:
             st.subheader("Metrics")
-
-            # Display Metrics Grid
             m1, m2 = st.columns(2)
             m1.metric("Accuracy", f"{metrics['Accuracy']:.1%}")
-            m2.metric("F1 Score", f"{metrics['F1']:.3f}", help="Weighted F1 for Multi-Class")
-
+            m2.metric("F1 Score", f"{metrics['F1']:.3f}")
             m3, m4 = st.columns(2)
             m3.metric("Precision", f"{metrics['Precision']:.1%}")
             m4.metric("Recall", f"{metrics['Recall']:.1%}")
 
-            # Only show Binary-Specific Charts if strictly Binary
             if is_binary and proba is not None:
-                # Restored ROC Plot Logic
                 fpr, tpr, roc_th = roc_curve(y_test, proba)
                 fig_roc, ax_roc = plt.subplots()
-
-                # ROC curve
                 ax_roc.plot(fpr, tpr, label="ROC Curve")
-                ax_roc.plot([0, 1], [0, 1], linestyle="--", color="gray", label="Chance")
-
-                # Show Threshold Point
+                ax_roc.plot([0, 1], [0, 1], linestyle="--", color="gray")
                 if 'effective_threshold' in locals():
                     idx = (np.abs(roc_th - effective_threshold)).argmin()
-                    ax_roc.scatter(
-                        fpr[idx],
-                        tpr[idx],
-                        color="red",
-                        s=80,
-                        label=f"Threshold = {round(float(effective_threshold), 3)}"
-                    )
-
+                    ax_roc.scatter(fpr[idx], tpr[idx], color="red", s=80, label="Threshold")
                 ax_roc.set_title("ROC Curve")
-                ax_roc.set_xlabel("False Positive Rate")
-                ax_roc.set_ylabel("True Positive Rate")
-                ax_roc.legend()
-
                 st.pyplot(fig_roc)
                 plt.close(fig_roc)
 
@@ -819,220 +755,109 @@ if st.button("Train Model"):
             else:
                 st.success("Model performance is solid.")
 
-            # Confusion Matrix
+            # --- RESTORED: Header ---
             st.subheader("Confusion Matrix")
-
+            # --- FIX: Robust Confusion Matrix ---
             if is_binary:
-                # For Binary, we force a specific order: Yes (1) then No (0)
                 cm = confusion_matrix(y_bin, preds, labels=[1, 0])
-                cm_df = pd.DataFrame(
-                    cm.T,
-                    index=[f"Pred: {classes[1]}", f"Pred: {classes[0]}"],
-                    columns=[f"Actual: {classes[1]}", f"Actual: {classes[0]}"]
-                )
+                cm_df = pd.DataFrame(cm.T,
+                                     index=[f"Pred: {classes[1]}", f"Pred: {classes[0]}"],
+                                     columns=[f"Actual: {classes[1]}", f"Actual: {classes[0]}"])
             else:
-                # For Multi-Class, we use the default order
-                cm = confusion_matrix(y_test, preds)
-                # Try to get class names if encoder exists, otherwise use "Class 0, Class 1..."
                 if 'le' in locals() and le is not None:
-                    labels = [f"Class: {c}" for c in le.classes_]
+                    known_labels = le.classes_
+                    cm = confusion_matrix(y_test, preds, labels=np.arange(len(known_labels)))
+                    label_names = [f"Class: {c}" for c in known_labels]
                 else:
-                    labels = [f"Class: {i}" for i in range(len(cm))]
+                    all_labels = sorted(list(set(y_test) | set(preds)))
+                    cm = confusion_matrix(y_test, preds, labels=all_labels)
+                    label_names = [f"Class: {l}" for l in all_labels]
 
-                cm_df = pd.DataFrame(cm.T, index=[f"Pred: {x}" for x in labels],
-                                     columns=[f"Actual: {x}" for x in labels])
-
+                cm_df = pd.DataFrame(cm.T,
+                                     index=[f"Pred: {x}" for x in label_names],
+                                     columns=[f"Actual: {x}" for x in label_names])
             st.dataframe(cm_df)
 
-
+    # ==========================
+    # REGRESSION OUTPUTS (RESTORED)
+    # ==========================
     else:
-
-        # ---------------------------------------------------------
-
-        # 1. CALCULATE RAW METRICS
-
-        # ---------------------------------------------------------
-
         mse = mean_squared_error(y_test, preds)
-
         r2 = r2_score(y_test, preds)
-
-        # Calculate Adjusted R2 (Correctly counting features)
-
         n = len(y_test)
-
         try:
-
-            # Ask the model how many features it actually used
-
             p = pipeline.named_steps["model"].n_features_in_
-
-        except AttributeError:
-
-            # Fallback for models that don't track this
-
+        except:
             p = pipeline.named_steps["prep"].transform(X_test).shape[1]
 
-        # Prevent Division by Zero
+        # Calculate Adjusted R2
+        adj_r2 = 1 - (1 - r2) * (n - 1) / (n - p - 1) if n > p + 1 else r2
 
-        if n > p + 1:
+        metrics = {"MAE": mean_absolute_error(y_test, preds), "RMSE": np.sqrt(mse), "R2": r2, "Adj R2": adj_r2}
 
-            adj_r2 = 1 - (1 - r2) * (n - 1) / (n - p - 1)
-
+        # --- RESTORED: DYNAMIC MESSAGES ---
+        # A. R-Squared
+        if metrics['R2'] > 0.8:
+            r2_msg = "🌟 **Excellent.** Explains most variation."
+        elif metrics['R2'] > 0.5:
+            r2_msg = "✅ **Decent.** Sees main trends."
         else:
+            r2_msg = "⚠️ **Poor.** Features don't explain target well."
 
-            adj_r2 = r2
-
-        # --- CRITICAL FIX: Ensure 'metrics' is defined here for later use ---
-
-        metrics = {
-
-            "MAE": mean_absolute_error(y_test, preds),
-
-            "RMSE": np.sqrt(mse),
-
-            "R2": r2,
-
-            "Adj R2": adj_r2
-
-        }
-
-        # ---------------------------------------------------------
-
-        # 2. GENERATE DYNAMIC HELP MESSAGES
-
-        # ---------------------------------------------------------
-
-        # A. R-Squared Logic
-
-        r2_val = metrics['R2']
-
-        if r2_val > 0.8:
-
-            r2_msg = "🌟 **Excellent.** The model explains most of the variation in the target."
-
-        elif r2_val > 0.5:
-
-            r2_msg = "✅ **Decent.** The model sees the main trends, but misses some finer details."
-
-        else:
-
-            r2_msg = "⚠️ **Poor.** The features provided do not explain the target well."
-
-        # B. Adjusted R-Squared Logic
-
+        # B. Adjusted R-Squared (Bloat Check)
         diff = metrics['R2'] - metrics['Adj R2']
-
         if metrics['Adj R2'] < 0:
-
-            adj_msg = "⛔ **Critical:** Model is worse than random guessing."
-
+            adj_msg = "⛔ **Critical:** Worse than random guessing."
         elif diff > 0.10:
-
             adj_msg = f"⚠️ **High Bloat:** Score dropped by {diff:.3f}. Too many useless columns."
-
         elif diff > 0.05:
-
             adj_msg = "ℹ️ **Fair:** Moderate penalty applied."
-
         else:
-
-            adj_msg = "✅ **Efficient:** The model is not 'stuffed' with junk data."
+            adj_msg = "✅ **Efficient:** Model isn't stuffed with junk data."
 
         # C. MAE Logic
-
         target_mean = y_test.mean()
-
-        mae_val = metrics['MAE']
-
-        error_pct = (mae_val / target_mean) * 100 if target_mean != 0 else 0
-
+        error_pct = (metrics['MAE'] / target_mean) * 100 if target_mean != 0 else 0
         if error_pct < 10:
-
             mae_msg = f"🌟 **High Precision:** Off by only ~{error_pct:.1f}%."
-
         elif error_pct < 20:
-
             mae_msg = f"✅ **Acceptable:** Off by ~{error_pct:.1f}%."
-
         else:
-
             mae_msg = f"⚠️ **High Error:** Off by ~{error_pct:.1f}%."
 
         # D. RMSE Logic
-
-        rmse_val = metrics['RMSE']
-
-        gap = rmse_val - mae_val
-
-        if gap > (mae_val * 0.5):
-
-            rmse_msg = "⚠️ **Unstable:** RMSE >> MAE. Occasional massive mistakes (Outliers)."
-
-        else:
-
-            rmse_msg = "✅ **Stable:** RMSE is close to MAE."
-
-        # ---------------------------------------------------------
-
-        # 3. DISPLAY METRICS (FIXED: 2x2 GRID)
-
-        # ---------------------------------------------------------
+        gap = metrics['RMSE'] - metrics['MAE']
+        rmse_msg = "⚠️ **Unstable:** Large outliers detected." if gap > (
+                    metrics['MAE'] * 0.5) else "✅ **Stable:** Errors are consistent."
 
         with col1:
-
             st.subheader("Metrics")
-
-            # Row 1: R2 and Adj R2
-
-            r1c1, r1c2 = st.columns(2)
-
-            r1c1.metric("R² Score", f"{metrics['R2']:.3f}", help=f"{r2_msg}\n(1.0 = Perfect)")
-
-            r1c2.metric("Adj. R²", f"{metrics['Adj R2']:.3f}", help=adj_msg)
-
-            # Row 2: MAE and RMSE
-
-            r2c1, r2c2 = st.columns(2)
-
-            r2c1.metric("MAE", f"{metrics['MAE']:.2f}", help=f"**Meaning:**\n{mae_msg}")
-
-            r2c2.metric("RMSE", f"{metrics['RMSE']:.2f}", help=f"**Stability:**\n{rmse_msg}")
+            r1, r2 = st.columns(2)
+            r1.metric("R² Score", f"{metrics['R2']:.3f}", help=f"{r2_msg}\n(1.0 = Perfect)")
+            r2.metric("Adj. R²", f"{metrics['Adj R2']:.3f}", help=adj_msg)
+            r3, r4 = st.columns(2)
+            r3.metric("MAE", f"{metrics['MAE']:.2f}", help=f"**Meaning:**\n{mae_msg}")
+            r4.metric("RMSE", f"{metrics['RMSE']:.2f}", help=f"**Stability:**\n{rmse_msg}")
 
             st.subheader("Model Summary")
-
             if metrics["R2"] < 0.4:
-
                 st.warning("Very weak model — predictions are unreliable.")
-
             elif metrics["R2"] < 0.7:
-
                 st.info("Okay model — usable but improve if possible.")
-
             else:
-
                 st.success("Strong model — predictions are quite reliable.")
 
+        # --- RESTORED: CENTERED RESIDUAL PLOT ---
         st.markdown("---")
-
         left, center, right = st.columns([1, 3, 1])
-
         with center:
-
             fig, ax = plt.subplots(figsize=(12, 6))
-
             ax.scatter(preds, y_test - preds, alpha=0.6)
-
             ax.axhline(0, color="red", linewidth=1)
-
             ax.set_title("Residuals")
-
             ax.set_xlabel("Predicted Values")
-
             ax.set_ylabel("Residuals (Actual - Predicted)")
-
             st.pyplot(fig, use_container_width=True)
-
             plt.close(fig)
 
     # ======================================
