@@ -13,7 +13,7 @@ from sklearn.preprocessing import StandardScaler, OneHotEncoder
 from sklearn.impute import SimpleImputer
 from sklearn.inspection import permutation_importance
 from sklearn.model_selection import RandomizedSearchCV
-
+from sklearn.metrics import roc_curve
 from sklearn.linear_model import (
    LinearRegression, Ridge, Lasso, ElasticNet, LogisticRegression
 )
@@ -190,8 +190,6 @@ if len(X_train_all) < 5:
 
 X_to_predict = X.loc[~train_mask]
 
-is_binary = y_train_all.nunique() == 2
-
 # A. BINARY TARGET: Calculate Information Value (IV) & Drill Down
 if is_binary:
     st.caption("ℹ️ **Information Value (IV):** Ranks features by how well they split 'Yes' vs 'No'.")
@@ -247,9 +245,8 @@ if is_binary:
         # FIX: Only use rows that have a target (ignore prediction rows with NaNs)
         temp_df = df.loc[train_mask].copy()
 
-        target_vals = sorted(temp_df[target].unique())
-        # Map target: 1 = Minority/Target, 0 = Majority
-        temp_df['target_internal'] = (temp_df[target] == target_vals[1]).astype(int)
+        minority_class = temp_df[target].value_counts().idxmin()
+        temp_df['target_internal'] = (temp_df[target] == minority_class).astype(int)
 
         for col in features:
             try:
@@ -382,13 +379,11 @@ with model_container:
 
     # POWER USER FEATURE: Slider appears only if Tuning is ON
     if enable_tuning:
-        tuning_iter = st.sidebar.slider(
-            "Tuning Intensity",
-            min_value=10,
-            max_value=50,
+        tuning_iter = st.sidebar.select_slider(
+            "Tuning Intensity (Trials)",
+            options=[10, 30, 50, 75, 100],  # <--- Specific list of options
             value=10,
-            step=10,
-            help="10 = Fast (30s). 50 = Thorough (3-5 mins). Higher values test more combinations."
+            help="Higher values test more combinations but take longer."
         )
     else:
         tuning_iter = 10  # Fallback default
@@ -396,7 +391,7 @@ with model_container:
     #Refit Strategy Checkbox (Defined in Sidebar to prevent app reset)
     refit_strategy = st.sidebar.checkbox(
         "🚀 Retrain on 100% data for predictions",
-        value=True,
+        value=False,
         help="Maximize accuracy by using all available data (Train + Test) for the final CSV."
     )
 
@@ -582,81 +577,111 @@ if st.button("Train Model"):
 
     # 2. Run the "Challenger" (Hyperparameter Tuning) - ONLY if checked
     if enable_tuning:
-        with st.spinner(f"⚡ Challenge Round: AI is trying {tuning_iter} random configurations..."):
-            # We clone the pipeline so we don't mess up the default one yet
-            from sklearn.base import clone
+        # --- A. PREPARE PROGRESS VISUALS ---
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        status_text.write(f"⚡ Challenge Round: Preparing to test {tuning_iter} configurations...")
 
-            tuned_pipeline = clone(pipeline)
+        # We clone the pipeline so we don't mess up the default one yet
+        from sklearn.base import clone
 
-            search = RandomizedSearchCV(
-                tuned_pipeline,
-                param_distributions=param_dist,
-                n_iter=tuning_iter,  # <--- CONNECTED TO SLIDER
-                cv=3,
-                random_state=42,
-                n_jobs=1,
-                # Optimize for the same metric we measure
-                scoring='f1' if is_binary else 'r2'
-            )
+        tuned_pipeline = clone(pipeline)
 
-            try:
-                search.fit(X_train, y_train)
-                best_model = search.best_estimator_
+        search = RandomizedSearchCV(
+            tuned_pipeline,
+            param_distributions=param_dist,
+            n_iter=tuning_iter,  # <--- CONNECTED TO SLIDER
+            cv=3,
+            random_state=42,
+            n_jobs=1,  # <--- CRITICAL: Keeps RAM usage low to prevent crashes
+            scoring='f1' if is_binary else 'r2'
+        )
 
-                # Evaluate the Challenger on the SAME test set
-                if is_binary:
-                    y_tuned = best_model.predict(X_test)
-                    if hasattr(best_model.named_steps["model"], "predict_proba"):
-                        proba_tuned = best_model.predict_proba(X_test)[:, 1]
-                        y_tuned = (proba_tuned >= 0.5).astype(int)
-                    tuned_score = f1_score((y_test == sorted(y_test.unique())[1]).astype(int), y_tuned, zero_division=0)
-                else:
-                    tuned_score = r2_score(y_test, best_model.predict(X_test))
+        try:
+            # 1. Fake progress loop to keep user engaged (since scikit-learn blocks execution)
+            import time
 
-                # --- THE DECISION ---
-                if tuned_score > baseline_score:
-                    # Case A: AI Won
-                    pipeline = best_model  # Replace default with new winner
-                    improvement = (tuned_score - baseline_score)
+            status_text.write(f"⚡ AI is training {tuning_iter} models... This may take a moment.")
+            progress_bar.progress(10)
 
-                    # Business Friendly Message
-                    st.success(f"🎉 **AI Optimization Successful!**")
-                    st.markdown(
-                        f"The AI beat the default settings. **{score_name} improved by {improvement:.3f}** (from {baseline_score:.3f} to {tuned_score:.3f}).")
+            # 2. The Heavy Lifting (This is where it might crash)
+            search.fit(X_train, y_train)
 
-                    # Print Winning Parameters
-                    best_params = search.best_params_
-                    translator = {
-                        "model__C": "Strictness (C)",
-                        "model__alpha": "Smoothing (Alpha)",
-                        "model__learning_rate": "Learning Speed",
-                        "model__n_estimators": "Number of Trees",
-                        "model__num_leaves": "Tree Complexity",
-                        "model__max_depth": "Max Depth",
-                        "model__hidden_layer_sizes": "Neural Layers",
-                        "model__learning_rate_init": "Init Speed"
-                    }
+            # 3. Success!
+            progress_bar.progress(100)
+            status_text.success("✅ Tuning Complete!")
+            time.sleep(0.5)  # Pause briefly so user sees the 100%
+            progress_bar.empty()  # Clear the bar
+            status_text.empty()
 
-                    # --- Format the winning settings (With Rounding) ---
-                    msg = []
-                    for k, v in best_params.items():
-                        name = translator.get(k, k.replace('model__', ''))
-                        if isinstance(v, (float, np.floating)):
-                            val_str = f"{v:.4f}"  # Round to 4 decimals
-                        else:
-                            val_str = str(v)
-                        msg.append(f"**{name}:** {val_str}")
+            best_model = search.best_estimator_
 
-                    st.info(f"**Winning Settings:** " + ", ".join(msg))
+            # Evaluate the Challenger on the SAME test set
+            if is_binary:
+                y_tuned = best_model.predict(X_test)
+                if hasattr(best_model.named_steps["model"], "predict_proba"):
+                    proba_tuned = best_model.predict_proba(X_test)[:, 1]
+                    y_tuned = (proba_tuned >= 0.5).astype(int)
+                tuned_score = f1_score((y_test == sorted(y_test.unique())[1]).astype(int), y_tuned, zero_division=0)
+            else:
+                tuned_score = r2_score(y_test, best_model.predict(X_test))
 
-                else:
-                    # Case B: AI Failed (Default was better)
-                    st.info(f"ℹ️ **Optimization Result:** The default model was already excellent.")
-                    st.markdown(
-                        f"The AI tried {tuning_iter} variations but none beat the default {score_name} of **{baseline_score:.3f}**. We kept the safe default model.")
+            # --- THE DECISION ---
+            if tuned_score > baseline_score:
+                # Case A: AI Won
+                pipeline = best_model  # Replace default with new winner
+                improvement = (tuned_score - baseline_score)
 
-            except Exception as e:
-                st.error(f"⚠️ Tuning skipped due to error: {e}. Using default model.")
+                # Business Friendly Message
+                st.success(f"🎉 **AI Optimization Successful!**")
+                st.markdown(
+                    f"The AI beat the default settings. **{score_name} improved by {improvement:.3f}** (from {baseline_score:.3f} to {tuned_score:.3f}).")
+
+                # Print Winning Parameters
+                best_params = search.best_params_
+                translator = {
+                    "model__C": "Strictness (C)",
+                    "model__alpha": "Smoothing (Alpha)",
+                    "model__learning_rate": "Learning Speed",
+                    "model__n_estimators": "Number of Trees",
+                    "model__num_leaves": "Tree Complexity",
+                    "model__max_depth": "Max Depth",
+                    "model__hidden_layer_sizes": "Neural Layers",
+                    "model__learning_rate_init": "Init Speed"
+                }
+
+                # --- Format the winning settings (With Rounding) ---
+                msg = []
+                for k, v in best_params.items():
+                    name = translator.get(k, k.replace('model__', ''))
+                    if isinstance(v, (float, np.floating)):
+                        val_str = f"{v:.4f}"  # Round to 4 decimals
+                    else:
+                        val_str = str(v)
+                    msg.append(f"**{name}:** {val_str}")
+
+                st.info(f"**Winning Settings:** " + ", ".join(msg))
+
+            else:
+                # Case B: AI Failed (Default was better)
+                st.info(f"ℹ️ **Optimization Result:** The default model was already excellent.")
+                st.markdown(
+                    f"The AI tried {tuning_iter} variations but none beat the default {score_name} of **{baseline_score:.3f}**. We kept the safe default model.")
+
+        except MemoryError:
+            # SPECIFIC CATCH: Ran out of RAM
+            st.error("⛔ **Server Overload:** The dataset is too large to tune with these settings.")
+            st.warning(
+                "Try reducing the 'Tuning Intensity' slider or switching to a simpler model (like Linear Regression).")
+            progress_bar.empty()
+            status_text.empty()
+
+        except Exception as e:
+            # GENERAL CATCH: Any other crash
+            st.error(f"⚠️ Tuning skipped due to an unexpected error: {e}")
+            st.info("Using the default model instead.")
+            progress_bar.empty()
+            status_text.empty()
 
     else:
         # Tuning OFF
@@ -1090,7 +1115,10 @@ if st.button("Train Model"):
             st.markdown("#### 4️⃣ What mistakes will I make?")
             if is_binary:
                 # We use the raw confusion matrix 'cm' (Actual=Rows, Pred=Cols)
-                tn, fp, fn, tp = cm.ravel()
+                if cm.shape == (2, 2):
+                    tn, fp, fn, tp = cm.ravel()
+                else:
+                    tn = fp = fn = tp = 0
 
                 if fp > fn:
                     st.error(
@@ -1106,6 +1134,7 @@ if st.button("Train Model"):
                     f"⚠️ **Budgeting Error:** Predictions are wrong by **{mae:.2f}** on average. Can your business margin handle this variance?")
 
         # ======================================
+        # ======================================
         # FEATURE IMPORTANCE (UNIFIED & AUTOMATED)
         # ======================================
         st.markdown("---")
@@ -1120,30 +1149,33 @@ if st.button("Train Model"):
             if hasattr(final_model, "feature_importances_"):
                 importances = final_model.feature_importances_
 
+                # [FIX 1] Robust Feature Naming
                 try:
                     names = pipeline.named_steps["prep"].get_feature_names_out()
                 except:
                     names = [f"Feat_{i}" for i in range(len(importances))]
 
+                # [FIX 1] Length Safety Check (Crucial for OHE/Drop/Passthrough)
+                if len(names) != len(importances):
+                    names = [f"Feat_{i}" for i in range(len(importances))]
+
                 fi = pd.DataFrame({"Feature": names, "Importance": importances})
 
-                # --- AUTO-SUGGEST FOR GBM (Check for Zeros) ---
-                useless = fi[fi["Importance"] == 0]
+                # [FIX 2] Numerical Stability for "Useless" features
+                useless = fi[fi["Importance"] <= 1e-6]
 
                 if len(useless) > 0:
-                    # Check which original columns caused this explosion
                     high_card_culprits = []
                     for c in cat_cols:
-                        if c in df.columns:  # Safety check
+                        if c in df.columns:
                             unique_count = df[c].nunique()
                             if unique_count > 20:
-                                high_card_culprits.append(f"{c} ({unique_count} features)")
+                                # [FIX 3] Wording Accuracy
+                                high_card_culprits.append(f"{c} (~{unique_count} unique val)")
 
                     warning_msg = (
-                        f"⚠️ **Optimization Tip:** Found **{len(useless)} features** with 0.0 importance (Useless).\n"
+                        f"⚠️ **Optimization Tip:** Found **{len(useless)} features** with ~0 importance.\n"
                     )
-
-                    # --- NEW: Explicitly list the feature names ---
                     warning_msg += f"\n**Features to Remove:** {', '.join(useless['Feature'].tolist())}\n\n"
 
                     if high_card_culprits:
@@ -1153,9 +1185,9 @@ if st.button("Train Model"):
                         warning_msg += "These features simply didn't help the model learn anything. You can safely drop them."
 
                     st.warning(warning_msg)
-
                 else:
                     st.success("✅ All features are contributing! No completely useless features found.")
+
                 # Plot top 20
                 fi = fi.sort_values(by="Importance", ascending=True).tail(20)
 
@@ -1163,13 +1195,15 @@ if st.button("Train Model"):
                 ax_imp.barh(fi["Feature"], fi["Importance"], color="#4b72af")
                 ax_imp.set_title(f"Native Importance ({model_choice})")
                 ax_imp.set_xlabel("Relative Importance (Gain)")
-                st.pyplot(fig_imp)
-                plt.close(fig_imp)
+                st.pyplot(fig_imp, clear_figure=True)  # [FIX 4] Clear figure explicitly
+
             # ------------------------------------------------------
             # 2) Permutation Importance (Linear / Logistic / NN)
             # ------------------------------------------------------
             else:
                 with st.spinner("Calculating Permutation Importance..."):
+                    # Note: We pass the PIPELINE and X_TEST (raw data).
+                    # Therefore, importance corresponds to RAW COLUMNS, not transformed ones.
                     result = permutation_importance(
                         pipeline,
                         X_test,
@@ -1185,25 +1219,25 @@ if st.button("Train Model"):
                 fi = pd.DataFrame({"Feature": names, "Importance": imp})
                 fi = fi.sort_values(by="Importance", ascending=True)
 
-                # --- AUTO-SUGGEST FOR PERMUTATION (Check for Negatives) ---
-                weak = fi[fi["Importance"] <= 0]
+                # [FIX 5] Less aggressive negative threshold
+                weak = fi[fi["Importance"] < -1e-4]
                 if len(weak) > 0:
                     st.warning(
-                        "⚠️ **Optimization Tip:** These features seem to be hurting accuracy (Importance ≤ 0).\n"
+                        "⚠️ **Optimization Tip:** These features seem to be hurting accuracy (Importance < 0).\n"
                         "Consider removing them to improve the model:\n\n"
                         f"**{', '.join(list(weak['Feature']))}**"
                     )
                 else:
                     st.success("✅ All features are contributing positively! No drops needed.")
 
+                st.caption("ℹ️ Permutation importance reflects raw input columns (before encoding).")
                 fig_perm, ax_perm = plt.subplots(figsize=(10, 6))
                 colors = ["#e53935" if v <= 0 else "#4caf50" for v in fi["Importance"]]
 
                 ax_perm.barh(fi["Feature"], fi["Importance"], color=colors)
                 ax_perm.set_title("Permutation Importance")
                 ax_perm.set_xlabel("Performance Drop if Shuffled")
-                st.pyplot(fig_perm)
-                plt.close(fig_perm)
+                st.pyplot(fig_perm, clear_figure=True)
 
         except Exception as e:
             st.error(f"Feature importance could not be calculated: {e}")
@@ -1218,68 +1252,84 @@ if st.button("Train Model"):
         # ------------------ Final Refit Strategy & Export ------------------
         st.markdown("---")
 
-        # 1. Prepare "Train" Data (For reference)
+        # 1. Prepare "Train" Data
         train_df = X_train.copy()
         train_df["y_true"] = y_train.values
-        train_df["y_pred"] = None  # We don't usually predict on train, or you can add pipeline.predict(X_train) here
+        # [FIX 6] Use np.nan instead of None for dtype safety
+        train_df["y_pred"] = np.nan
         train_df["Row_Type"] = "Train"
 
-        # 2. Prepare "Test" Data (The 20% validation set)
+        # 2. Prepare "Test" Data
         test_df = X_test.copy()
         test_df["y_true"] = y_test.values
         test_df["y_pred"] = preds
         test_df["Row_Type"] = "Test"
 
+        # Handle Probabilities for Test Data
+        current_threshold = effective_threshold if 'effective_threshold' in locals() else 0.5
+
         if is_binary and hasattr(pipeline.named_steps["model"], "predict_proba"):
             test_df["y_proba"] = pipeline.predict_proba(X_test)[:, 1]
-            test_df["Low_Confidence"] = (abs(test_df["y_proba"] - effective_threshold) <= 0.10)
+            test_df["Low_Confidence"] = (abs(test_df["y_proba"] - current_threshold) <= 0.10)
 
-        # 3. Future Predictions (Refit Logic)
+        # ---------------------------------------------------------
+        # 3. FUTURE PREDICTIONS (REFIT STRATEGY)
+        # ---------------------------------------------------------
         future_preds = None
         future_proba = None
 
-        # Only show this if there is data to predict
         if len(X_to_predict) > 0:
-            st.subheader("🔮 Predictions")
+            st.subheader("🔮 Predictions on Missing Targets")
+
+            final_pipeline = pipeline
 
             if refit_strategy:
-                with st.spinner("Retraining on full dataset..."):
+                with st.spinner("🚀 Retraining on 100% data..."):
                     try:
-                        pipeline.fit(X_train_all, y_train_all)
-                        future_preds = pipeline.predict(X_to_predict)
+                        from sklearn.base import clone
 
-                        if is_binary and hasattr(pipeline.named_steps["model"], "predict_proba"):
-                            future_proba = pipeline.predict_proba(X_to_predict)[:, 1]
-                            future_preds = (future_proba >= effective_threshold).astype(int)
+                        # [FIX 7] clone() copies parameters automatically, no need for set_params
+                        temp_pipeline = clone(pipeline)
+                        temp_pipeline.fit(X_train_all, y_train_all)
+                        final_pipeline = temp_pipeline
+                        st.success("✅ Retraining complete! Predictions are based on 100% of the data.")
+                    except MemoryError:
+                        st.error("⛔ **Server Out of Memory:** Could not retrain on 100% data.")
+                        st.warning("⚠️ **Fallback:** Using the 80% Training model instead.")
                     except Exception as e:
-                        st.error(f"Retraining failed: {e}")
+                        st.error(f"⚠️ Retraining failed due to error: {e}")
+                        st.info("Using previous model for predictions instead.")
             else:
-                # Use existing 80% model
-                future_preds = pipeline.predict(X_to_predict)
-                if is_binary and hasattr(pipeline.named_steps["model"], "predict_proba"):
-                    future_proba = pipeline.predict_proba(X_to_predict)[:, 1]
-                    future_preds = (future_proba >= effective_threshold).astype(int)
+                st.caption("ℹ️ Using existing model (trained on partial data) for predictions.")
+
+            # --- PREDICT ---
+            future_preds = final_pipeline.predict(X_to_predict)
+
+            if is_binary and hasattr(final_pipeline.named_steps["model"], "predict_proba"):
+                future_proba = final_pipeline.predict_proba(X_to_predict)[:, 1]
+                future_preds = (future_proba >= current_threshold).astype(int)
 
         # 4. Build Final Combined Dataframe
-        # Start with Train + Test
         final_df = pd.concat([train_df, test_df], axis=0)
 
-        # Add Predictions if they exist
         if future_preds is not None:
             future = X_to_predict.copy()
-            future["y_true"] = None
+            future["y_true"] = np.nan  # Use nan for consistency
             future["y_pred"] = future_preds
-            future["Row_Type"] = "Predict"  # Labeled as Predict
+            future["Row_Type"] = "Predict"
 
-            if future_proba is not None:
+            if is_binary and future_proba is not None:
                 future["y_proba"] = future_proba
-                future["Low_Confidence"] = (abs(future["y_proba"] - effective_threshold) < 0.10)
+                future["Low_Confidence"] = (abs(future["y_proba"] - current_threshold) < 0.10)
 
             final_df = pd.concat([final_df, future], axis=0)
 
-        # Filter if user requested "Predict only"
         if predict_only:
             final_df = final_df[final_df["Row_Type"] == "Predict"]
+            st.info("Displaying/Downloading 'Predict' rows only.")
+
+        st.write(f"### Final Data ({final_df.shape[0]} rows)")
+        st.dataframe(final_df.head())
 
         st.download_button(
             "Download Full Data (Train/Test/Predict)",
