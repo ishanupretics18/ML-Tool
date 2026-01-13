@@ -75,6 +75,12 @@ if file is None:
 
 
 df = pd.read_csv(file)
+# --- CLEANING STEP ---
+target = st.sidebar.selectbox("Target column", df.columns)
+if df[target].dtype == 'object':
+    # Strip whitespace and make lowercase to prevent "Yes " vs "Yes" crash
+    df[target] = df[target].astype(str).str.strip().str.title()
+
 predict_only = st.sidebar.toggle("Predict missing targets only", value=False)
 st.dataframe(df.head())
 
@@ -82,8 +88,6 @@ st.dataframe(df.head())
 model_container = st.sidebar.container()
 
 
-# ------------------ Column Selection ------------------
-target = st.sidebar.selectbox("Target column", df.columns)
 
 
 # --- SMART FEATURE FILTERING ---
@@ -746,7 +750,17 @@ if st.button("Train Model"):
             proba = None
 
         # Determine Averaging Method: 'binary' for Yes/No, 'weighted' for Multi-Class
-        avg_method = 'binary' if is_binary else 'weighted'
+        # NEW ROBUST LOGIC:
+        # Check if the Test set strictly implies binary, or if the model predictions are binary
+        unique_test_labels = np.unique(y_test)
+        unique_pred_labels = np.unique(preds)
+
+        # It is only binary if BOTH test data and predictions have <= 2 unique values
+        if len(unique_test_labels) <= 2 and len(unique_pred_labels) <= 2:
+            avg_method = 'binary'
+        else:
+            # Fallback to weighted if a 3rd ghost class appeared in test data
+            avg_method = 'weighted'
 
         metrics = {
             "Accuracy": accuracy_score(y_test, preds),
