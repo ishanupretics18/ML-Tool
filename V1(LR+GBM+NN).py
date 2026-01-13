@@ -1241,8 +1241,10 @@ if st.button("Train Model"):
     # ===========================
     # FINAL GUARANTEE (CRITICAL)
     # ===========================
-    st.session_state.final_df = final_df
-    st.session_state.model_trained = True
+    if "final_df" in locals():
+        st.session_state.final_df = final_df
+        st.session_state.model_trained = True
+        st.write(f"### Final Data ({final_df.shape[0]} rows)")
 
     st.write(f"### Final Data ({final_df.shape[0]} rows)")
 
