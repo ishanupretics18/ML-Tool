@@ -1222,12 +1222,14 @@ if st.button("Train Model"):
         final_df = final_df[final_df["Row_Type"] == "Predict"]
         st.info("Displaying/Downloading 'Predict' rows only.")
 
-    # FIX: Decode the predictions back to "Yes/No" if we have an encoder
+    # FIX: Decode predictions back to original labels
     if is_classification and le is not None and "y_pred" in final_df.columns:
         try:
             valid_mask = final_df["y_pred"].notna()
-            final_df.loc[valid_mask, "y_pred_label"] = le.inverse_transform(
-                final_df.loc[valid_mask, "y_pred"].astype(int)
+            final_df.loc[valid_mask, "y_pred_label"] = (
+                le.inverse_transform(
+                    final_df.loc[valid_mask, "y_pred"].astype(int)
+                )
             )
         except Exception as e:
             st.warning(f"Label decoding skipped: {e}")
