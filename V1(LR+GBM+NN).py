@@ -865,386 +865,386 @@ if st.button("Train Model"):
             st.pyplot(fig, use_container_width=True)
             plt.close(fig)
 
+# ======================================
+    # BUSINESS INSIGHTS & RELIABILITY CHECK
     # ======================================
-        # BUSINESS INSIGHTS & RELIABILITY CHECK
-        # ======================================
-        st.markdown("---")
-        st.subheader("💼 Business Applicability & Reality Check")
+    st.markdown("---")
+    st.subheader("💼 Business Applicability & Reality Check")
 
-        c1, c2 = st.columns(2)
+    c1, c2 = st.columns(2)
 
-        with c1:
-            st.markdown("#### 1️⃣ What question does this answer?")
-            if is_binary:
-                st.info(f"**\"Is {target} likely to occur?\"**")
-                st.markdown(f"It predicts the probability of the **{classes[1]}** class.")
-            else:
-                st.info(f"**\"What is the expected value of {target}?\"**")
-                st.markdown("It estimates the numerical value based on the features provided.")
+    with c1:
+        st.markdown("#### 1️⃣ What question does this answer?")
+        if is_binary:
+            st.info(f"**\"Is {target} likely to occur?\"**")
+            st.markdown(f"It predicts the probability of the **{classes[1]}** class.")
+        else:
+            st.info(f"**\"What is the expected value of {target}?\"**")
+            st.markdown("It estimates the numerical value based on the features provided.")
 
-        with c2:
-            st.markdown("#### 2️⃣ What assumptions are made?")
+    with c2:
+        st.markdown("#### 2️⃣ What assumptions are made?")
 
-            # --- LOGIC FOR LINEAR MODELS ---
-            if model_choice in ["Linear Regression", "Logistic Regression"]:
-                st.write("• **Linearity:** Assumes straight-line relationships.")
+        # --- LOGIC FOR LINEAR MODELS ---
+        if model_choice in ["Linear Regression", "Logistic Regression"]:
+            st.write("• **Linearity:** Assumes straight-line relationships.")
 
-                # Check Correlation (VIF Proxy)
-                numeric_df = X_train.select_dtypes(include=np.number)
-                if numeric_df.shape[1] > 1:
-                    corr_matrix = numeric_df.corr().abs()
-                    upper = corr_matrix.where(np.triu(np.ones(corr_matrix.shape), k=1).astype(bool))
-                    high_corr_pairs = []
-                    for col in upper.columns:
-                        for row in upper.index:
-                            if upper.loc[row, col] > 0.85:
-                                high_corr_pairs.append((row, col))
+            # Check Correlation (VIF Proxy)
+            numeric_df = X_train.select_dtypes(include=np.number)
+            if numeric_df.shape[1] > 1:
+                corr_matrix = numeric_df.corr().abs()
+                upper = corr_matrix.where(np.triu(np.ones(corr_matrix.shape), k=1).astype(bool))
+                high_corr_pairs = []
+                for col in upper.columns:
+                    for row in upper.index:
+                        if upper.loc[row, col] > 0.85:
+                            high_corr_pairs.append((row, col))
 
-                    if high_corr_pairs:
-                        st.warning("⚠️ **Stability Issue (Collinearity):** The following columns duplicate information.")
-                        st.markdown("**Actionable Fix (Remove one from each pair):**")
-                        for pair in high_corr_pairs[:3]:
-                            st.write(
-                                f"- **{pair[0]}** is {round(upper.loc[pair[0], pair[1]] * 100)}% identical to **{pair[1]}**.")
-                    else:
-                        # Explicitly tell the user everything is fine
-                        st.success(
-                            "✅ **No Action Needed:** No columns need removal. All features provide unique information (Low Collinearity).")
+                if high_corr_pairs:
+                    st.warning("⚠️ **Stability Issue (Collinearity):** The following columns duplicate information.")
+                    st.markdown("**Actionable Fix (Remove one from each pair):**")
+                    for pair in high_corr_pairs[:3]:
+                        st.write(
+                            f"- **{pair[0]}** is {round(upper.loc[pair[0], pair[1]] * 100)}% identical to **{pair[1]}**.")
                 else:
-                    st.success("✅ Data is simple enough.")
-
-            # --- LOGIC FOR GBM ---
-            elif model_choice == "GBM":
-                st.success("✅ **Flexible:** Handles complex, non-linear patterns automatically.")
-                if len(X_train) < 500:
-                    st.warning(
-                        f"⚠️ **Data Warning:** You only have {len(X_train)} rows. GBMs usually need 1000+ rows to avoid memorizing data (Overfitting).")
-
-            # --- LOGIC FOR NEURAL NETWORKS ---
+                    # Explicitly tell the user everything is fine
+                    st.success(
+                        "✅ **No Action Needed:** No columns need removal. All features provide unique information (Low Collinearity).")
             else:
-                st.write("• **Complexity:** Assumes complex non-linear relationships.")
-                if len(X_train) < 1000:
-                    st.error(
-                        f"⛔ **Data Starvation:** Neural Networks require massive data to learn. You only have {len(X_train)} rows. **Recommendation:** Switch to Linear/Logistic Regression.")
-                else:
-                    st.info(
-                        "ℹ️ **Black Box Warning:** This model is hard to interpret. Use only if accuracy is more important than explaining 'Why' to stakeholders.")
+                st.success("✅ Data is simple enough.")
 
-        c3, c4 = st.columns(2)
+        # --- LOGIC FOR GBM ---
+        elif model_choice == "GBM":
+            st.success("✅ **Flexible:** Handles complex, non-linear patterns automatically.")
+            if len(X_train) < 500:
+                st.warning(
+                    f"⚠️ **Data Warning:** You only have {len(X_train)} rows. GBMs usually need 1000+ rows to avoid memorizing data (Overfitting).")
 
-        with c3:
-            st.markdown("#### 3️⃣ When will it lie to me?")
-            liar_list = []
-
-            # Performance checks
-            if is_binary:
-                if metrics["ROC AUC"] != "N/A" and metrics["ROC AUC"] < 0.65:
-                    liar_list.append(
-                        "⚠️ **Uncertainty:** The model is guessing often (AUC < 0.65). Don't trust its confidence scores.")
-            else:
-                if metrics["R2"] < 0.3:
-                    liar_list.append("⚠️ **Weak Signal:** The model only explains a tiny part of the variation (<30%).")
-
-            # General checks
-            liar_list.append(
-                "⚠️ **Data Drift:** If market conditions change (e.g., inflation, new laws), these predictions will fail immediately.")
-
-            if not liar_list:
-                st.success("✅ The model is statistically robust on this test data.")
-            else:
-                for l in liar_list:
-                    st.write(l)
-
-        with c4:
-            st.markdown("#### 4️⃣ What mistakes will I make?")
-            if is_binary:
-                # We use the raw confusion matrix 'cm' (Actual=Rows, Pred=Cols)
-                if cm.shape == (2, 2):
-                    tn, fp, fn, tp = cm.ravel()
-                else:
-                    tn = fp = fn = tp = 0
-
-                if fp > fn:
-                    st.error(
-                        "⚠️ **False Alarms (Type I Error):** The model is 'Trigger Happy'. You will waste resources on people who won't convert.")
-                elif fn > fp:
-                    st.error(
-                        "⚠️ **Missed Opportunities (Type II Error):** The model is 'Too Careful'. You will miss valuable targets.")
-                else:
-                    st.info("💡 **Balanced:** The model makes False Positives and Negatives at roughly the same rate.")
-            else:
-                mae = metrics["MAE"]
+        # --- LOGIC FOR NEURAL NETWORKS ---
+        else:
+            st.write("• **Complexity:** Assumes complex non-linear relationships.")
+            if len(X_train) < 1000:
                 st.error(
-                    f"⚠️ **Budgeting Error:** Predictions are wrong by **{mae:.2f}** on average. Can your business margin handle this variance?")
-
-        # ======================================
-        # ======================================
-        # FEATURE IMPORTANCE
-        # ======================================
-        st.markdown("---")
-        st.subheader("⚖️ Feature Importance & Model Diagnostics")
-
-        try:
-            final_model = pipeline.named_steps["model"]
-
-            # ======================================================
-            # STEP 1️⃣ — PERMUTATION IMPORTANCE (GROUND TRUTH, ALWAYS)
-            # ======================================================
-            st.markdown("### 🧠 Ground Truth: What Actually Drives Predictions")
-
-            if is_classification:
-                perm_scoring = "f1" if is_binary else "f1_weighted"
+                    f"⛔ **Data Starvation:** Neural Networks require massive data to learn. You only have {len(X_train)} rows. **Recommendation:** Switch to Linear/Logistic Regression.")
             else:
-                perm_scoring = "r2"
+                st.info(
+                    "ℹ️ **Black Box Warning:** This model is hard to interpret. Use only if accuracy is more important than explaining 'Why' to stakeholders.")
 
-            with st.spinner("Calculating permutation importance (ground truth)..."):
-                perm_result = permutation_importance(
-                    pipeline,
-                    X_test,
-                    y_test,
-                    n_repeats=10,
-                    random_state=42,
-                    scoring=perm_scoring,
-                    n_jobs=1
-                )
+    c3, c4 = st.columns(2)
 
-            perm_df = pd.DataFrame({
-                "Feature": X_test.columns,
-                "Perm_Importance": perm_result.importances_mean,
-                "Perm_Std": perm_result.importances_std
-            })
+    with c3:
+        st.markdown("#### 3️⃣ When will it lie to me?")
+        liar_list = []
 
-            perm_df["Stability"] = perm_df["Perm_Importance"] / (perm_df["Perm_Std"] + 1e-9)
-            perm_df = perm_df.sort_values("Perm_Importance", ascending=False)
+        # Performance checks
+        if is_binary:
+            if metrics["ROC AUC"] != "N/A" and metrics["ROC AUC"] < 0.65:
+                liar_list.append(
+                    "⚠️ **Uncertainty:** The model is guessing often (AUC < 0.65). Don't trust its confidence scores.")
+        else:
+            if metrics["R2"] < 0.3:
+                liar_list.append("⚠️ **Weak Signal:** The model only explains a tiny part of the variation (<30%).")
 
-            # ==========================
-            # STEP 2️⃣ — STRUCTURAL BELIEF
-            # ==========================
-            struct_df = None
-            struct_type = None
+        # General checks
+        liar_list.append(
+            "⚠️ **Data Drift:** If market conditions change (e.g., inflation, new laws), these predictions will fail immediately.")
 
-            try:
-                raw_names = pipeline.named_steps["prep"].get_feature_names_out()
-                clean_names = [n.replace("num__", "").replace("cat__", "") for n in raw_names]
-            except:
-                clean_names = None
+        if not liar_list:
+            st.success("✅ The model is statistically robust on this test data.")
+        else:
+            for l in liar_list:
+                st.write(l)
 
-            if hasattr(final_model, "feature_importances_"):
-                struct_df = pd.DataFrame({
-                    "Feature": clean_names if clean_names else [f"Feat_{i}" for i in
-                                                                range(len(final_model.feature_importances_))],
-                    "Struct_Importance": final_model.feature_importances_
-                })
-                struct_type = "Tree Split Importance"
-
-            elif hasattr(final_model, "coef_"):
-                coef = final_model.coef_[0] if final_model.coef_.ndim > 1 else final_model.coef_
-                struct_df = pd.DataFrame({
-                    "Feature": clean_names if clean_names else [f"Feat_{i}" for i in range(len(coef))],
-                    "Struct_Importance": np.abs(coef)
-                })
-                struct_type = "Coefficient Magnitude"
-
-            # ======================================================
-            # STEP 3️⃣ — DISAGREEMENT & RISK DETECTION ENGINE
-            # ======================================================
-            st.markdown("### 🚨 Explanation Consistency Check")
-
-            alerts = []
-
-            if struct_df is not None:
-                compare_df = perm_df.merge(struct_df, on="Feature", how="left").fillna(0)
-
-                compare_df["Perm_Norm"] = compare_df["Perm_Importance"] / (
-                            compare_df["Perm_Importance"].abs().max() + 1e-9)
-                compare_df["Struct_Norm"] = compare_df["Struct_Importance"] / (
-                            compare_df["Struct_Importance"].abs().max() + 1e-9)
-
-                false_imp = compare_df[
-                    (compare_df["Struct_Norm"] > 0.4) &
-                    (compare_df["Perm_Norm"] < 0.05)
-                    ]
-
-                hidden = compare_df[
-                    (compare_df["Struct_Norm"] < 0.05) &
-                    (compare_df["Perm_Norm"] > 0.4)
-                    ]
-
-                if len(false_imp) > 0:
-                    alerts.append(
-                        f"⚠️ **False Importance:** {', '.join(false_imp['Feature'].head(3))} "
-                        "look important to the model but do not affect real performance."
-                    )
-
-                if len(hidden) > 0:
-                    alerts.append(
-                        f"⚠️ **Hidden Drivers:** {', '.join(hidden['Feature'].head(3))} "
-                        "strongly impact predictions despite low model visibility."
-                    )
-
-            harmful = perm_df[perm_df["Perm_Importance"] < 0]
-            if len(harmful) > 0:
-                alerts.append(
-                    f"⛔ **Harmful Features:** {', '.join(harmful['Feature'].head(3))} "
-                    "actively reduce model quality."
-                )
-
-            unstable = perm_df[perm_df["Stability"] < 1]
-            if len(unstable) > 0:
-                alerts.append(
-                    f"⚠️ **Unstable Signals:** {', '.join(unstable['Feature'].head(3))} "
-                    "show inconsistent importance. Interpret cautiously."
-                )
-
-            if alerts:
-                for a in alerts:
-                    if a.startswith("⛔"):
-                        st.error(a)
-                    else:
-                        st.warning(a)
+    with c4:
+        st.markdown("#### 4️⃣ What mistakes will I make?")
+        if is_binary:
+            # We use the raw confusion matrix 'cm' (Actual=Rows, Pred=Cols)
+            if cm.shape == (2, 2):
+                tn, fp, fn, tp = cm.ravel()
             else:
-                st.success("✅ Feature explanations are consistent and reliable.")
+                tn = fp = fn = tp = 0
 
-            # ======================================================
-            # STEP 4️⃣ — VISUALIZATION (TRUTH > BELIEF)
-            # ======================================================
-            st.markdown("### 📊 Top Drivers (Permutation = Ground Truth)")
+            if fp > fn:
+                st.error(
+                    "⚠️ **False Alarms (Type I Error):** The model is 'Trigger Happy'. You will waste resources on people who won't convert.")
+            elif fn > fp:
+                st.error(
+                    "⚠️ **Missed Opportunities (Type II Error):** The model is 'Too Careful'. You will miss valuable targets.")
+            else:
+                st.info("💡 **Balanced:** The model makes False Positives and Negatives at roughly the same rate.")
+        else:
+            mae = metrics["MAE"]
+            st.error(
+                f"⚠️ **Budgeting Error:** Predictions are wrong by **{mae:.2f}** on average. Can your business margin handle this variance?")
 
-            plot_df = perm_df.head(20).sort_values("Perm_Importance")
+    # ======================================
+    # ======================================
+    # FEATURE IMPORTANCE
+    # ======================================
+    st.markdown("---")
+    st.subheader("⚖️ Feature Importance & Model Diagnostics")
 
-            fig, ax = plt.subplots(figsize=(10, 6))
-            colors = ["#e53935" if v < 0 else "#4caf50" for v in plot_df["Perm_Importance"]]
-            ax.barh(plot_df["Feature"], plot_df["Perm_Importance"], color=colors)
-            ax.set_title("Permutation Importance (Performance Impact)")
-            ax.set_xlabel("Performance Change if Feature is Shuffled")
-            st.pyplot(fig, clear_figure=True)
+    try:
+        final_model = pipeline.named_steps["model"]
 
-            # ======================================================
-            # STEP 5️⃣ — EXECUTIVE INTERPRETATION
-            # ======================================================
-            st.markdown("### 🧑‍💼 Executive Summary")
+        # ======================================================
+        # STEP 1️⃣ — PERMUTATION IMPORTANCE (GROUND TRUTH, ALWAYS)
+        # ======================================================
+        st.markdown("### 🧠 Ground Truth: What Actually Drives Predictions")
 
-            st.info(
-                "This analysis verifies whether the model is **actually using** the features it claims are important.\n\n"
-                "• Green features are **true business drivers**.\n"
-                "• Red features actively harm decision quality.\n"
-                "• Alerts indicate bias, redundancy, or instability.\n\n"
-                "**Action:** Trust only features confirmed by permutation importance."
+        if is_classification:
+            perm_scoring = "f1" if is_binary else "f1_weighted"
+        else:
+            perm_scoring = "r2"
+
+        with st.spinner("Calculating permutation importance (ground truth)..."):
+            perm_result = permutation_importance(
+                pipeline,
+                X_test,
+                y_test,
+                n_repeats=10,
+                random_state=42,
+                scoring=perm_scoring,
+                n_jobs=1
             )
 
-        except Exception as e:
-            st.error(f"Feature importance analysis failed: {e}")
+        perm_df = pd.DataFrame({
+            "Feature": X_test.columns,
+            "Perm_Importance": perm_result.importances_mean,
+            "Perm_Std": perm_result.importances_std
+        })
 
-        # ------------------ Save Outputs ------------------
-        os.makedirs("models", exist_ok=True)
-        model_path = f"models/{model_choice.replace(' ', '_')}.joblib"
-        joblib.dump(pipeline, model_path)
+        perm_df["Stability"] = perm_df["Perm_Importance"] / (perm_df["Perm_Std"] + 1e-9)
+        perm_df = perm_df.sort_values("Perm_Importance", ascending=False)
 
-        st.success(f"Model saved: {model_path}")
+        # ==========================
+        # STEP 2️⃣ — STRUCTURAL BELIEF
+        # ==========================
+        struct_df = None
+        struct_type = None
 
-        # ------------------ Final Refit Strategy & Export ------------------
-        st.markdown("---")
+        try:
+            raw_names = pipeline.named_steps["prep"].get_feature_names_out()
+            clean_names = [n.replace("num__", "").replace("cat__", "") for n in raw_names]
+        except:
+            clean_names = None
 
-        # 1. Prepare "Train" Data
-        train_df = X_train.copy()
-        train_df["y_true"] = y_train.values
-        # [FIX 6] Use np.nan instead of None for dtype safety
-        train_df["y_pred"] = np.nan
-        train_df["Row_Type"] = "Train"
+        if hasattr(final_model, "feature_importances_"):
+            struct_df = pd.DataFrame({
+                "Feature": clean_names if clean_names else [f"Feat_{i}" for i in
+                                                            range(len(final_model.feature_importances_))],
+                "Struct_Importance": final_model.feature_importances_
+            })
+            struct_type = "Tree Split Importance"
 
-        # 2. Prepare "Test" Data
-        test_df = X_test.copy()
-        test_df["y_true"] = y_test.values
-        test_df["y_pred"] = preds
-        test_df["Row_Type"] = "Test"
+        elif hasattr(final_model, "coef_"):
+            coef = final_model.coef_[0] if final_model.coef_.ndim > 1 else final_model.coef_
+            struct_df = pd.DataFrame({
+                "Feature": clean_names if clean_names else [f"Feat_{i}" for i in range(len(coef))],
+                "Struct_Importance": np.abs(coef)
+            })
+            struct_type = "Coefficient Magnitude"
 
-        # Handle Probabilities for Test Data
-        current_threshold = effective_threshold if 'effective_threshold' in locals() else 0.5
+        # ======================================================
+        # STEP 3️⃣ — DISAGREEMENT & RISK DETECTION ENGINE
+        # ======================================================
+        st.markdown("### 🚨 Explanation Consistency Check")
 
-        if is_binary and hasattr(pipeline.named_steps["model"], "predict_proba"):
-            test_df["y_proba"] = pipeline.predict_proba(X_test)[:, 1]
-            test_df["Low_Confidence"] = (abs(test_df["y_proba"] - current_threshold) <= 0.10)
+        alerts = []
 
-        # ---------------------------------------------------------
-        # 3. FUTURE PREDICTIONS (REFIT STRATEGY)
-        # ---------------------------------------------------------
-        future_preds = None
-        future_proba = None
+        if struct_df is not None:
+            compare_df = perm_df.merge(struct_df, on="Feature", how="left").fillna(0)
 
-        if len(X_to_predict) > 0:
-            st.subheader("🔮 Predictions on Missing Targets")
+            compare_df["Perm_Norm"] = compare_df["Perm_Importance"] / (
+                        compare_df["Perm_Importance"].abs().max() + 1e-9)
+            compare_df["Struct_Norm"] = compare_df["Struct_Importance"] / (
+                        compare_df["Struct_Importance"].abs().max() + 1e-9)
 
-            final_pipeline = pipeline
+            false_imp = compare_df[
+                (compare_df["Struct_Norm"] > 0.4) &
+                (compare_df["Perm_Norm"] < 0.05)
+                ]
 
-            if refit_strategy:
-                with st.spinner("🚀 Retraining on 100% data..."):
-                    try:
-                        from sklearn.base import clone
+            hidden = compare_df[
+                (compare_df["Struct_Norm"] < 0.05) &
+                (compare_df["Perm_Norm"] > 0.4)
+                ]
 
-                        # [FIX 7] clone() copies parameters automatically, no need for set_params
-                        temp_pipeline = clone(pipeline)
-                        temp_pipeline.fit(X_train_all, y_train_all)
-                        final_pipeline = temp_pipeline
-                        st.success("✅ Retraining complete! Predictions are based on 100% of the data.")
-                    except MemoryError:
-                        st.error("⛔ **Server Out of Memory:** Could not retrain on 100% data.")
-                        st.warning("⚠️ **Fallback:** Using the 80% Training model instead.")
-                    except Exception as e:
-                        st.error(f"⚠️ Retraining failed due to error: {e}")
-                        st.info("Using previous model for predictions instead.")
-            else:
-                st.caption("ℹ️ Using existing model (trained on partial data) for predictions.")
-
-            # --- PREDICT ---
-            future_preds = final_pipeline.predict(X_to_predict)
-
-            if is_binary and hasattr(final_pipeline.named_steps["model"], "predict_proba"):
-                future_proba = final_pipeline.predict_proba(X_to_predict)[:, 1]
-                future_preds = (future_proba >= current_threshold).astype(int)
-
-        # 4. Build Final Combined Dataframe
-        final_df = pd.concat([train_df, test_df], axis=0)
-
-        if future_preds is not None:
-            future = X_to_predict.copy()
-            future["y_true"] = np.nan  # Use nan for consistency
-            future["y_pred"] = future_preds
-            future["Row_Type"] = "Predict"
-
-            if is_binary and future_proba is not None:
-                future["y_proba"] = future_proba
-                future["Low_Confidence"] = (abs(future["y_proba"] - current_threshold) < 0.10)
-
-            final_df = pd.concat([final_df, future], axis=0)
-
-
-    if predict_only:
-        final_df = final_df[final_df["Row_Type"] == "Predict"]
-        st.info("Displaying/Downloading 'Predict' rows only.")
-
-    # FIX: Decode predictions back to original labels
-        if (
-                is_classification
-                and le is not None
-                and "final_df" in locals()
-                and "y_pred" in final_df.columns
-        ):
-            try:
-                valid_mask = final_df["y_pred"].notna()
-                final_df.loc[valid_mask, "y_pred_label"] = (
-                    le.inverse_transform(
-                        final_df.loc[valid_mask, "y_pred"].astype(int)
-                    )
+            if len(false_imp) > 0:
+                alerts.append(
+                    f"⚠️ **False Importance:** {', '.join(false_imp['Feature'].head(3))} "
+                    "look important to the model but do not affect real performance."
                 )
-            except Exception as e:
-                st.warning(f"Label decoding skipped: {e}")
-    # ===========================
-    # ===========================
-    # FINAL GUARANTEE (CRITICAL)
-    # ===========================
-    if "final_df" in locals():
-        st.session_state.final_df = final_df
-        st.session_state.model_trained = True
+
+            if len(hidden) > 0:
+                alerts.append(
+                    f"⚠️ **Hidden Drivers:** {', '.join(hidden['Feature'].head(3))} "
+                    "strongly impact predictions despite low model visibility."
+                )
+
+        harmful = perm_df[perm_df["Perm_Importance"] < 0]
+        if len(harmful) > 0:
+            alerts.append(
+                f"⛔ **Harmful Features:** {', '.join(harmful['Feature'].head(3))} "
+                "actively reduce model quality."
+            )
+
+        unstable = perm_df[perm_df["Stability"] < 1]
+        if len(unstable) > 0:
+            alerts.append(
+                f"⚠️ **Unstable Signals:** {', '.join(unstable['Feature'].head(3))} "
+                "show inconsistent importance. Interpret cautiously."
+            )
+
+        if alerts:
+            for a in alerts:
+                if a.startswith("⛔"):
+                    st.error(a)
+                else:
+                    st.warning(a)
+        else:
+            st.success("✅ Feature explanations are consistent and reliable.")
+
+        # ======================================================
+        # STEP 4️⃣ — VISUALIZATION (TRUTH > BELIEF)
+        # ======================================================
+        st.markdown("### 📊 Top Drivers (Permutation = Ground Truth)")
+
+        plot_df = perm_df.head(20).sort_values("Perm_Importance")
+
+        fig, ax = plt.subplots(figsize=(10, 6))
+        colors = ["#e53935" if v < 0 else "#4caf50" for v in plot_df["Perm_Importance"]]
+        ax.barh(plot_df["Feature"], plot_df["Perm_Importance"], color=colors)
+        ax.set_title("Permutation Importance (Performance Impact)")
+        ax.set_xlabel("Performance Change if Feature is Shuffled")
+        st.pyplot(fig, clear_figure=True)
+
+        # ======================================================
+        # STEP 5️⃣ — EXECUTIVE INTERPRETATION
+        # ======================================================
+        st.markdown("### 🧑‍💼 Executive Summary")
+
+        st.info(
+            "This analysis verifies whether the model is **actually using** the features it claims are important.\n\n"
+            "• Green features are **true business drivers**.\n"
+            "• Red features actively harm decision quality.\n"
+            "• Alerts indicate bias, redundancy, or instability.\n\n"
+            "**Action:** Trust only features confirmed by permutation importance."
+        )
+
+    except Exception as e:
+        st.error(f"Feature importance analysis failed: {e}")
+
+    # ------------------ Save Outputs ------------------
+    os.makedirs("models", exist_ok=True)
+    model_path = f"models/{model_choice.replace(' ', '_')}.joblib"
+    joblib.dump(pipeline, model_path)
+
+    st.success(f"Model saved: {model_path}")
+
+    # ------------------ Final Refit Strategy & Export ------------------
+    st.markdown("---")
+
+    # 1. Prepare "Train" Data
+    train_df = X_train.copy()
+    train_df["y_true"] = y_train.values
+    # [FIX 6] Use np.nan instead of None for dtype safety
+    train_df["y_pred"] = np.nan
+    train_df["Row_Type"] = "Train"
+
+    # 2. Prepare "Test" Data
+    test_df = X_test.copy()
+    test_df["y_true"] = y_test.values
+    test_df["y_pred"] = preds
+    test_df["Row_Type"] = "Test"
+
+    # Handle Probabilities for Test Data
+    current_threshold = effective_threshold if 'effective_threshold' in locals() else 0.5
+
+    if is_binary and hasattr(pipeline.named_steps["model"], "predict_proba"):
+        test_df["y_proba"] = pipeline.predict_proba(X_test)[:, 1]
+        test_df["Low_Confidence"] = (abs(test_df["y_proba"] - current_threshold) <= 0.10)
+
+    # ---------------------------------------------------------
+    # 3. FUTURE PREDICTIONS (REFIT STRATEGY)
+    # ---------------------------------------------------------
+    future_preds = None
+    future_proba = None
+
+    if len(X_to_predict) > 0:
+        st.subheader("🔮 Predictions on Missing Targets")
+
+        final_pipeline = pipeline
+
+        if refit_strategy:
+            with st.spinner("🚀 Retraining on 100% data..."):
+                try:
+                    from sklearn.base import clone
+
+                    # [FIX 7] clone() copies parameters automatically, no need for set_params
+                    temp_pipeline = clone(pipeline)
+                    temp_pipeline.fit(X_train_all, y_train_all)
+                    final_pipeline = temp_pipeline
+                    st.success("✅ Retraining complete! Predictions are based on 100% of the data.")
+                except MemoryError:
+                    st.error("⛔ **Server Out of Memory:** Could not retrain on 100% data.")
+                    st.warning("⚠️ **Fallback:** Using the 80% Training model instead.")
+                except Exception as e:
+                    st.error(f"⚠️ Retraining failed due to error: {e}")
+                    st.info("Using previous model for predictions instead.")
+        else:
+            st.caption("ℹ️ Using existing model (trained on partial data) for predictions.")
+
+        # --- PREDICT ---
+        future_preds = final_pipeline.predict(X_to_predict)
+
+        if is_binary and hasattr(final_pipeline.named_steps["model"], "predict_proba"):
+            future_proba = final_pipeline.predict_proba(X_to_predict)[:, 1]
+            future_preds = (future_proba >= current_threshold).astype(int)
+
+    # 4. Build Final Combined Dataframe
+    final_df = pd.concat([train_df, test_df], axis=0)
+
+    if future_preds is not None:
+        future = X_to_predict.copy()
+        future["y_true"] = np.nan  # Use nan for consistency
+        future["y_pred"] = future_preds
+        future["Row_Type"] = "Predict"
+
+        if is_binary and future_proba is not None:
+            future["y_proba"] = future_proba
+            future["Low_Confidence"] = (abs(future["y_proba"] - current_threshold) < 0.10)
+
+        final_df = pd.concat([final_df, future], axis=0)
+
+
+if predict_only:
+    final_df = final_df[final_df["Row_Type"] == "Predict"]
+    st.info("Displaying/Downloading 'Predict' rows only.")
+
+# FIX: Decode predictions back to original labels
+if (
+        is_classification
+        and le is not None
+        and "final_df" in locals()
+        and "y_pred" in final_df.columns
+):
+    try:
+        valid_mask = final_df["y_pred"].notna()
+        final_df.loc[valid_mask, "y_pred_label"] = (
+            le.inverse_transform(
+                final_df.loc[valid_mask, "y_pred"].astype(int)
+            )
+        )
+    except Exception as e:
+        st.warning(f"Label decoding skipped: {e}")
+# ===========================
+# ===========================
+# FINAL GUARANTEE (CRITICAL)
+# ===========================
+if "final_df" in locals():
+    st.session_state.final_df = final_df
+    st.session_state.model_trained = True
 
     # SAFE DISPLAY (uses session_state)
     if st.session_state.get("final_df") is not None:
