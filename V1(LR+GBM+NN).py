@@ -4,7 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import joblib
 import os
-
+import time
 
 from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
@@ -76,12 +76,37 @@ if file is None:
 
 
 df = pd.read_csv(file)
-# --- CLEANING STEP ---
-target = st.sidebar.selectbox("Target column", df.columns)
-if df[target].dtype == 'object':
-    # Strip whitespace and make lowercase to prevent "Yes " vs "Yes" crash
-    df[target] = df[target].astype(str).str.strip().str.title()
 
+# ------------------ Column Selection & HYGIENE ------------------
+target = st.sidebar.selectbox("Target column", df.columns)
+
+# 1. Clean whitespace and casing
+if df[target].dtype == 'object':
+    try:
+        df[target] = df[target].astype(str).str.strip().str.title()
+    except:
+        pass
+
+# 2. STANDARDIZE BLANKS (Convert all empty/space/null to actual NaN)
+# This ensures we catch every type of "missing" data
+df[target] = df[target].replace(r'^\s*$', np.nan, regex=True)
+df[target] = df[target].replace(['nan', 'Nan', 'NULL', 'None'], np.nan)
+
+# 3. CRITICAL SPLIT: Train vs Predict
+# train_mask finds rows where Target IS NOT EMPTY. These are for Training/Testing.
+train_mask = df[target].notna()
+
+# predict_mask finds rows where Target IS EMPTY. These are for Future Prediction.
+predict_mask = ~train_mask
+
+# 4. Define the Data Pools
+# Raw Training Data (Valid Targets Only)
+df_train_all = df[train_mask].copy()
+
+# Raw Prediction Data (Empty Targets Only)
+df_predict_all = df[predict_mask].copy()
+
+# Update the display to show the full dataset (so you can see what was uploaded)
 predict_only = st.sidebar.toggle("Predict missing targets only", value=False)
 st.dataframe(df.head())
 
@@ -130,70 +155,70 @@ if ignored_features:
 if len(features) == 0:
    st.stop()
 
+
 X = df[features]
-y = df[target]
 
-# --- 1. HANDLE MISSING TARGETS FIRST ---
-train_mask = y.notna()
-y_raw = y.loc[train_mask]  # Temp variable to check types
+y = df[target]  # --- 1. SET UP TRAINING DATA ---
 
-# --- 2. DETECT PROBLEM TYPE & ENCODE TARGET ---
+y_raw_train = y[train_mask]  # Only valid targets
 
-# CHECK 1: Is it numeric?
-is_numeric = pd.api.types.is_numeric_dtype(y_raw)
-unique_count = y_raw.nunique()
+X_train_all = X[train_mask]  # Only rows with valid targets# <--- RESTORED SAFETY CHECK --->if len(X_train_all) < 5:
 
-# LOGIC:
-# It is Classification ONLY if:
-# 1. It is Numeric AND has few unique values (e.g. 0, 1)
-# 2. OR It is Text AND has few unique values (e.g. "Yes", "No")
-# We assume "few" means <= 20. If it has > 20 text values, it's likely an ID.
+st.error(f"❌ Not enough training data! The target '{target}' has {len(X_train_all)} valid rows. Need at least 5.")
 
-if (is_numeric and unique_count <= 20) or (not is_numeric and unique_count <= 20):
+st.stop()
+
+# --- 2. SET UP PREDICTION DATA ---
+
+# These are the rows where Target was NaN
+
+X_to_predict = X[predict_mask]
+
+# --- 3. DETECT PROBLEM TYPE & ENCODE TARGET ---
+
+# We check types ONLY on the valid training data
+
+is_numeric = pd.api.types.is_numeric_dtype(y_raw_train)
+
+unique_count = y_raw_train.nunique()
+
+# Logic: Classification if text OR (numeric AND few values)
+le = None
+if (not is_numeric) or (is_numeric and unique_count <= 20):
+
     is_classification = True
 
     # Import Encoder
-    from sklearn.preprocessing import LabelEncoder
-
-    # We must fill NaNs temporarily to allow encoding, then revert mask later
-    y_filled = y.fillna("Unknown_Target_For_Encoding")
 
     le = LabelEncoder()
-    # Force string conversion to handle mixed types safely
-    y_encoded = le.fit_transform(y_filled.astype(str))
 
-    # Put back into Series with original index
-    y = pd.Series(y_encoded, index=df.index, name=target)
+    # Fit ONLY on valid training data (This prevents learning "NaN" as a class)
 
-    # Re-calculate train slices with the new encoded numbers
-    y_train_all = y.loc[train_mask]
+    y_encoded = le.fit_transform(y_raw_train.astype(str))
 
-    # Determine if Binary (2 classes) or Multi-Class (3+ classes)
+    # Create the final y_train series
+
+    y_train_all = pd.Series(y_encoded, index=y_raw_train.index, name=target)
+
+    # Strictly check if it is binary (2 classes)
+
     is_binary = (y_train_all.nunique() == 2)
 
+
+
 elif not is_numeric and unique_count > 20:
-    # ERROR TRAP: High Cardinality Text
-    st.error(
-        f"⛔ Target Error: The column '{target}' is text but has {unique_count} unique values.\n\n"
-        "This looks like an ID column (e.g. CustomerID, Name), not a target to predict.\n"
-        "Please select a valid target (like 'Churn' or 'TotalCharges')."
-    )
+
+    st.error(f"⛔ Target Error: '{target}' has {unique_count} unique values. Likely an ID.")
+
     st.stop()
 
 else:
-    # Regression Mode (Continuous Numbers)
+
     is_classification = False
+
     is_binary = False
-    y_train_all = y.loc[train_mask]
 
-X_train_all = X.loc[train_mask]
-
-# <---SAFETY CHECK--->
-if len(X_train_all) < 5:
-    st.error(f"❌ Not enough training data! The target '{target}' has {len(X_train_all)} rows. Need 5+.")
-    st.stop()
-
-X_to_predict = X.loc[~train_mask]
+    y_train_all = y_raw_train  # Use raw numeric values for regression
 
 # A. BINARY TARGET: Calculate Information Value (IV) & Drill Down
 if is_classification:
@@ -435,27 +460,36 @@ if is_classification:
     st.sidebar.markdown("---")
     st.sidebar.subheader("⚖️ Imbalance Handling")
 
-    # Calculate actual ratio
     actual_ratio = y_train_all.value_counts(normalize=True).min()
 
-    # RESTORED: Manual Override Checkbox
     manual_balance = st.sidebar.checkbox("Force Manual Balancing", value=False,
-                                         help="Force 'balanced' weights even if data seems okay.")
+                                         help="Check this to force weights even if data looks balanced.")
 
-    user_threshold = st.sidebar.slider(
-        "Auto-balance Threshold (%)", 5, 50, 15
-    ) / 100.0
+    user_threshold = st.sidebar.slider("Auto-balance Threshold (%)", 5, 50, 15) / 100.0
 
-    # Logic: Active if below threshold OR manual check
+    # Logic: Active if minority ratio is LESS than user threshold
     handle_imbalance = (actual_ratio < user_threshold) or manual_balance
 
-    # Visual confirmation table
     counts = y_train_all.value_counts()
-    balance_df = pd.DataFrame({
-        "Count": counts,
-        "Percentage": (y_train_all.value_counts(normalize=True) * 100).round(1).astype(str) + "%"
-    })
-    st.sidebar.dataframe(balance_df, use_container_width=True)
+
+    # --- DECODE LABELS FOR SIDEBAR TABLE ---
+    try:
+        # Convert numeric index (0, 1) back to text (No, Yes)
+        decoded_labels = le.inverse_transform(counts.index)
+        balance_df = pd.DataFrame({
+            "Class": decoded_labels,
+            "Count": counts.values,
+            "Percentage": (y_train_all.value_counts(normalize=True) * 100).round(1).astype(str) + "%"
+        })
+    except:
+        # Fallback if encoder fails
+        balance_df = pd.DataFrame({
+            "Class": counts.index,
+            "Count": counts.values,
+            "Percentage": (y_train_all.value_counts(normalize=True) * 100).round(1).astype(str) + "%"
+        })
+
+    st.sidebar.dataframe(balance_df, use_container_width=True, hide_index=True)
 
     if handle_imbalance:
         st.sidebar.success(f"✅ Balancing: ACTIVE {'(Manual)' if manual_balance else '(Auto)'}")
@@ -463,7 +497,6 @@ if is_classification:
         st.sidebar.info("ℹ️ Balancing: OFF")
 else:
     handle_imbalance = False
-
 X_train, X_test, y_train, y_test = train_test_split(
    X_train_all, y_train_all, test_size=test_size / 100, random_state=42
 )
@@ -520,7 +553,6 @@ pipeline = Pipeline([
    ("prep", preprocessor),
    ("model", model)
 ])
-
 # ------------------ Train ------------------
 if st.button("Train Model"):
     # 1. Train the "Champion" (Default Model)
