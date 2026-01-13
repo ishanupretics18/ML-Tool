@@ -1217,30 +1217,28 @@ if st.button("Train Model"):
 
             final_df = pd.concat([final_df, future], axis=0)
 
-        if predict_only:
-            final_df = final_df[final_df["Row_Type"] == "Predict"]
-            st.info("Displaying/Downloading 'Predict' rows only.")
 
-        # FIX: Decode the predictions back to "Yes/No" if we have an encoder
-        if is_classification and 'le' in locals():
-            # We check if y_pred is numeric before decoding to avoid errors
-            if pd.api.types.is_numeric_dtype(final_df["y_pred"]):
-                try:
-                    # Convert y_pred back to original strings (e.g., 0 -> "No", 1 -> "Yes")
-                    # We use .astype(int) to handle any floats safely
-                    final_df["y_pred_label"] = le.inverse_transform(final_df["y_pred"].fillna(0).astype(int))
+    if predict_only:
+        final_df = final_df[final_df["Row_Type"] == "Predict"]
+        st.info("Displaying/Downloading 'Predict' rows only.")
 
-                    # Optional: Overwrite y_pred or keep both.
-                    # Let's keep y_pred as number and add y_pred_label for clarity
-                except Exception as e:
-                    pass  # Keep as is if decoding fails
+    # FIX: Decode the predictions back to "Yes/No" if we have an encoder
+    if is_classification and le is not None and "y_pred" in final_df.columns:
+        try:
+            valid_mask = final_df["y_pred"].notna()
+            final_df.loc[valid_mask, "y_pred_label"] = le.inverse_transform(
+                final_df.loc[valid_mask, "y_pred"].astype(int)
+            )
+        except Exception as e:
+            st.warning(f"Label decoding skipped: {e}")
 
-            # Only run this if final_df was successfully built in the blocks above
-            if 'final_df' in locals():
-                st.write(f"### Final Data ({final_df.shape[0]} rows)")
-                # --- SAVE TO MEMORY ---
-                st.session_state.final_df = final_df
-                st.session_state.model_trained = True
+    # ===========================
+    # FINAL GUARANTEE (CRITICAL)
+    # ===========================
+    st.session_state.final_df = final_df
+    st.session_state.model_trained = True
+
+    st.write(f"### Final Data ({final_df.shape[0]} rows)")
 
 # --- AT THE VERY BOTTOM OF THE SCRIPT (NOT INDENTED) ---
 if st.session_state.get('model_trained') and st.session_state.get('final_df') is not None:
