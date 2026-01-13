@@ -976,109 +976,163 @@ if st.button("Train Model"):
                     f"⚠️ **Budgeting Error:** Predictions are wrong by **{mae:.2f}** on average. Can your business margin handle this variance?")
 
         # ======================================
-        # FEATURE IMPORTANCE (UNIFIED & AUTOMATED)
+        # ======================================
+        # FEATURE IMPORTANCE
         # ======================================
         st.markdown("---")
-        st.subheader("Feature Importance")
+        st.subheader("⚖️ Feature Importance & Model Diagnostics")
 
         try:
             final_model = pipeline.named_steps["model"]
 
-            # ------------------------------------------------------
-            # 1) Native Importance (LightGBM / Random Forest / Decision Trees)
-            # ------------------------------------------------------
-            if hasattr(final_model, "feature_importances_"):
-                importances = final_model.feature_importances_
+            # ======================================================
+            # STEP 1️⃣ — PERMUTATION IMPORTANCE (GROUND TRUTH, ALWAYS)
+            # ======================================================
+            st.markdown("### 🧠 Ground Truth: What Actually Drives Predictions")
 
-                # [FROM CODE 1] Robust Feature Naming for OHE (Cleaner)
-                try:
-                    raw_names = pipeline.named_steps["prep"].get_feature_names_out()
-                    # Clean the names (Remove 'cat__' and 'num__' prefixes)
-                    names = [n.replace('cat__', '').replace('num__', '') for n in raw_names]
-                except:
-                    names = [f"Feat_{i}" for i in range(len(importances))]
-
-                # [FROM CODE 2] Safety Check
-                if len(names) != len(importances):
-                    names = [f"Feat_{i}" for i in range(len(importances))]
-
-                fi = pd.DataFrame({"Feature": names, "Importance": importances})
-
-                # [FROM CODE 2] Optimization Diagnostics
-                useless = fi[fi["Importance"] <= 1e-6]
-
-                if len(useless) > 0:
-                    high_card_culprits = []
-                    # Check for high cardinality text columns causing bloat
-                    for c in df.select_dtypes(include=['object']).columns:
-                        if df[c].nunique() > 20:
-                            high_card_culprits.append(f"{c} ({df[c].nunique()} unique)")
-
-                    warning_msg = (
-                        f"⚠️ **Optimization Tip:** Found **{len(useless)} features** with ~0 importance.\n"
-                        f"**Features to consider dropping:** {', '.join(useless['Feature'].tolist()[:10])}"
-                    # Limit to first 10 for display
-                    )
-                    if len(useless) > 10: warning_msg += "..."
-
-                    if high_card_culprits:
-                        warning_msg += "\n\n**Likely Cause (High Cardinality columns):**\n- " + "\n- ".join(
-                            high_card_culprits)
-
-                    st.warning(warning_msg)
-                else:
-                    st.success("✅ All features are contributing! No completely useless features found.")
-
-                # Plot top 20
-                fi = fi.sort_values(by="Importance", ascending=True).tail(20)
-
-                fig_imp, ax_imp = plt.subplots(figsize=(10, 6))
-                ax_imp.barh(fi["Feature"], fi["Importance"], color="#4b72af")
-                ax_imp.set_title(f"Native Importance ({model_choice})")
-                ax_imp.set_xlabel("Relative Importance (Gain)")
-                st.pyplot(fig_imp, clear_figure=True)
-
-            # ------------------------------------------------------
-            # 2) Permutation Importance (Linear / Logistic / NN / HistGBM)
-            # ------------------------------------------------------
+            if is_classification:
+                perm_scoring = "f1" if is_binary else "f1_weighted"
             else:
-                st.info("ℹ️ Calculating **Permutation Importance** (Measures impact of the *Original* Columns).")
-                with st.spinner("Calculating Feature Importance..."):
-                    result = permutation_importance(
-                        pipeline,
-                        X_test,
-                        y_test,
-                        n_repeats=5,
-                        random_state=42,
-                        n_jobs=-1
+                perm_scoring = "r2"
+
+            with st.spinner("Calculating permutation importance (ground truth)..."):
+                perm_result = permutation_importance(
+                    pipeline,
+                    X_test,
+                    y_test,
+                    n_repeats=10,
+                    random_state=42,
+                    scoring=perm_scoring,
+                    n_jobs=1
+                )
+
+            perm_df = pd.DataFrame({
+                "Feature": X_test.columns,
+                "Perm_Importance": perm_result.importances_mean,
+                "Perm_Std": perm_result.importances_std
+            })
+
+            perm_df["Stability"] = perm_df["Perm_Importance"] / (perm_df["Perm_Std"] + 1e-9)
+            perm_df = perm_df.sort_values("Perm_Importance", ascending=False)
+
+            # ==========================
+            # STEP 2️⃣ — STRUCTURAL BELIEF
+            # ==========================
+            struct_df = None
+            struct_type = None
+
+            try:
+                raw_names = pipeline.named_steps["prep"].get_feature_names_out()
+                clean_names = [n.replace("num__", "").replace("cat__", "") for n in raw_names]
+            except:
+                clean_names = None
+
+            if hasattr(final_model, "feature_importances_"):
+                struct_df = pd.DataFrame({
+                    "Feature": clean_names if clean_names else [f"Feat_{i}" for i in
+                                                                range(len(final_model.feature_importances_))],
+                    "Struct_Importance": final_model.feature_importances_
+                })
+                struct_type = "Tree Split Importance"
+
+            elif hasattr(final_model, "coef_"):
+                coef = final_model.coef_[0] if final_model.coef_.ndim > 1 else final_model.coef_
+                struct_df = pd.DataFrame({
+                    "Feature": clean_names if clean_names else [f"Feat_{i}" for i in range(len(coef))],
+                    "Struct_Importance": np.abs(coef)
+                })
+                struct_type = "Coefficient Magnitude"
+
+            # ======================================================
+            # STEP 3️⃣ — DISAGREEMENT & RISK DETECTION ENGINE
+            # ======================================================
+            st.markdown("### 🚨 Explanation Consistency Check")
+
+            alerts = []
+
+            if struct_df is not None:
+                compare_df = perm_df.merge(struct_df, on="Feature", how="left").fillna(0)
+
+                compare_df["Perm_Norm"] = compare_df["Perm_Importance"] / (
+                            compare_df["Perm_Importance"].abs().max() + 1e-9)
+                compare_df["Struct_Norm"] = compare_df["Struct_Importance"] / (
+                            compare_df["Struct_Importance"].abs().max() + 1e-9)
+
+                false_imp = compare_df[
+                    (compare_df["Struct_Norm"] > 0.4) &
+                    (compare_df["Perm_Norm"] < 0.05)
+                    ]
+
+                hidden = compare_df[
+                    (compare_df["Struct_Norm"] < 0.05) &
+                    (compare_df["Perm_Norm"] > 0.4)
+                    ]
+
+                if len(false_imp) > 0:
+                    alerts.append(
+                        f"⚠️ **False Importance:** {', '.join(false_imp['Feature'].head(3))} "
+                        "look important to the model but do not affect real performance."
                     )
 
-                names = X_test.columns
-                imp = result.importances_mean
-
-                fi = pd.DataFrame({"Feature": names, "Importance": imp})
-                fi = fi.sort_values(by="Importance", ascending=True)
-
-                # [FROM CODE 2] Negative Importance Check
-                weak = fi[fi["Importance"] < -1e-4]
-                if len(weak) > 0:
-                    st.warning(
-                        "⚠️ **Optimization Tip:** These features seem to be hurting accuracy (Importance < 0).\n"
-                        f"**Consider removing:** {', '.join(list(weak['Feature']))}"
+                if len(hidden) > 0:
+                    alerts.append(
+                        f"⚠️ **Hidden Drivers:** {', '.join(hidden['Feature'].head(3))} "
+                        "strongly impact predictions despite low model visibility."
                     )
-                else:
-                    st.success("✅ All features are contributing positively!")
 
-                fig_perm, ax_perm = plt.subplots(figsize=(10, 6))
-                colors = ["#e53935" if v < 0 else "#4caf50" for v in fi["Importance"]]
+            harmful = perm_df[perm_df["Perm_Importance"] < 0]
+            if len(harmful) > 0:
+                alerts.append(
+                    f"⛔ **Harmful Features:** {', '.join(harmful['Feature'].head(3))} "
+                    "actively reduce model quality."
+                )
 
-                ax_perm.barh(fi["Feature"], fi["Importance"], color=colors)
-                ax_perm.set_title("Permutation Importance (Original Features)")
-                ax_perm.set_xlabel("Performance Drop if Shuffled")
-                st.pyplot(fig_perm, clear_figure=True)
+            unstable = perm_df[perm_df["Stability"] < 1]
+            if len(unstable) > 0:
+                alerts.append(
+                    f"⚠️ **Unstable Signals:** {', '.join(unstable['Feature'].head(3))} "
+                    "show inconsistent importance. Interpret cautiously."
+                )
+
+            if alerts:
+                for a in alerts:
+                    if a.startswith("⛔"):
+                        st.error(a)
+                    else:
+                        st.warning(a)
+            else:
+                st.success("✅ Feature explanations are consistent and reliable.")
+
+            # ======================================================
+            # STEP 4️⃣ — VISUALIZATION (TRUTH > BELIEF)
+            # ======================================================
+            st.markdown("### 📊 Top Drivers (Permutation = Ground Truth)")
+
+            plot_df = perm_df.head(20).sort_values("Perm_Importance")
+
+            fig, ax = plt.subplots(figsize=(10, 6))
+            colors = ["#e53935" if v < 0 else "#4caf50" for v in plot_df["Perm_Importance"]]
+            ax.barh(plot_df["Feature"], plot_df["Perm_Importance"], color=colors)
+            ax.set_title("Permutation Importance (Performance Impact)")
+            ax.set_xlabel("Performance Change if Feature is Shuffled")
+            st.pyplot(fig, clear_figure=True)
+
+            # ======================================================
+            # STEP 5️⃣ — EXECUTIVE INTERPRETATION
+            # ======================================================
+            st.markdown("### 🧑‍💼 Executive Summary")
+
+            st.info(
+                "This analysis verifies whether the model is **actually using** the features it claims are important.\n\n"
+                "• Green features are **true business drivers**.\n"
+                "• Red features actively harm decision quality.\n"
+                "• Alerts indicate bias, redundancy, or instability.\n\n"
+                "**Action:** Trust only features confirmed by permutation importance."
+            )
 
         except Exception as e:
-            st.error(f"Feature importance could not be calculated: {e}")
+            st.error(f"Feature importance analysis failed: {e}")
+
         # ------------------ Save Outputs ------------------
         os.makedirs("models", exist_ok=True)
         model_path = f"models/{model_choice.replace(' ', '_')}.joblib"
@@ -1183,18 +1237,16 @@ if st.button("Train Model"):
         st.write(f"### Final Data ({final_df.shape[0]} rows)")
         # --- SAVE TO MEMORY ---
         st.session_state.final_df = final_df
+# --- PERSISTENT DOWNLOAD SECTION (Outside the Train Button) ---
+if st.session_state.final_df is not None:
+    st.markdown("---")
+    st.subheader("📥 Export Predictions")
+    st.write(f"Showing results for {st.session_state.final_df.shape[0]} rows")
+    st.dataframe(st.session_state.final_df.head())
 
-    # --- PERSISTENT DOWNLOAD SECTION (Outside the Train Button) ---
-    if st.session_state.final_df is not None:
-        st.markdown("---")
-        st.subheader("📥 Export Predictions")
-        st.write(f"Showing results for {st.session_state.final_df.shape[0]} rows")
-        st.dataframe(st.session_state.final_df.head())
-
-        csv_data = st.session_state.final_df.to_csv(index=False)
-        st.download_button(
-            label="Download Full Data (Train/Test/Predict)",
-            data=csv_data,
-            file_name="ml_strategy_results.csv",
-            mime="text/csv"
-        )
+    csv_data = st.session_state.final_df.to_csv(index=False)
+    st.download_button(
+        label="Download Full Data (Train/Test/Predict)",
+        data=csv_data,
+        file_name="ml_strategy_results.csv",
+        mime="text/csv")
