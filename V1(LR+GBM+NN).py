@@ -794,9 +794,10 @@ if st.button("Train Model"):
 
         with col1:
             st.subheader("Metrics")
-            r1, r2 = st.columns(2)
-            r1.metric("R² Score", f"{metrics['R2']:.3f}", help=f"{r2_msg}\n(1.0 = Perfect)")
-            r2.metric("Adj. R²", f"{metrics['Adj R2']:.3f}", help=adj_msg)
+            # FIX: Use distinct names for the layout columns
+            col_r1, col_r2 = st.columns(2)
+            col_r1.metric("R² Score", f"{metrics['R2']:.3f}", help=f"{r2_msg}\n(1.0 = Perfect)")
+            col_r2.metric("Adj. R²", f"{metrics['Adj R2']:.3f}", help=adj_msg)
             r3, r4 = st.columns(2)
             r3.metric("MAE", f"{metrics['MAE']:.2f}", help=f"**Meaning:**\n{mae_msg}")
             r4.metric("RMSE", f"{metrics['RMSE']:.2f}", help=f"**Stability:**\n{rmse_msg}")
@@ -1128,6 +1129,21 @@ if st.button("Train Model"):
         if predict_only:
             final_df = final_df[final_df["Row_Type"] == "Predict"]
             st.info("Displaying/Downloading 'Predict' rows only.")
+
+        # FIX: Decode the predictions back to "Yes/No" if we have an encoder
+        if is_classification and 'le' in locals():
+            # We check if y_pred is numeric before decoding to avoid errors
+            if pd.api.types.is_numeric_dtype(final_df["y_pred"]):
+                try:
+                    # Convert y_pred back to original strings (e.g., 0 -> "No", 1 -> "Yes")
+                    # We use .astype(int) to handle any floats safely
+                    final_df["y_pred_label"] = le.inverse_transform(final_df["y_pred"].fillna(0).astype(int))
+
+                    # Optional: Overwrite y_pred or keep both.
+                    # Let's keep y_pred as number and add y_pred_label for clarity
+                except Exception as e:
+                    pass  # Keep as is if decoding fails
+
 
         st.write(f"### Final Data ({final_df.shape[0]} rows)")
         # --- SAVE TO MEMORY ---
