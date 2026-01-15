@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import joblib
 import os
 import time
+from sklearn.base import clone
 
 from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
@@ -26,6 +27,87 @@ from sklearn.metrics import (
    accuracy_score, precision_score, recall_score, f1_score, roc_auc_score,
    confusion_matrix
 )
+
+# ==============================
+# 🏭 INDUSTRY PRESET REGISTRY
+# ==============================
+
+LINEAR_PRESETS = {
+    "Low Regularization (Stable Data)": {
+        "model__alpha": 0.1
+    },
+    "Balanced (Industry Default)": {
+        "model__alpha": 1.0
+    },
+    "High Regularization (Noisy / Many Features)": {
+        "model__alpha": 10.0
+    }
+}
+
+LOGISTIC_PRESETS = {
+    "High Precision (Conservative)": {
+        "model__C": 0.3,
+        "model__solver": "liblinear",
+        "model__max_iter": 1000
+    },
+    "Balanced (Industry Default)": {
+        "model__C": 1.0,
+        "model__solver": "lbfgs",
+        "model__max_iter": 1000
+
+    },
+    "High Recall (Aggressive)": {
+        "model__C": 3.0,
+        "model__solver": "lbfgs",
+        "model__max_iter": 1000
+    }
+}
+
+GBM_PRESETS = {
+    "Fast & Safe (Low Overfitting)": {
+        "model__learning_rate": 0.05,
+        "model__n_estimators": 100,
+        "model__num_leaves": 31
+    },
+    "Balanced Production (Industry Default)": {
+        "model__learning_rate": 0.1,
+        "model__n_estimators": 200,
+        "model__num_leaves": 31
+    },
+    "High Accuracy (Large Data Only)": {
+        "model__learning_rate": 0.03,
+        "model__n_estimators": 500,
+        "model__num_leaves": 50
+    }
+}
+
+NN_PRESETS = {
+    "Small Data Safe": {
+        "model__hidden_layer_sizes": (50,),
+        "model__alpha": 0.01,
+        "model__learning_rate_init": 0.001
+    },
+    "Balanced (Industry Default)": {
+        "model__hidden_layer_sizes": (100, 50),
+        "model__alpha": 0.001,
+        "model__learning_rate_init": 0.001
+    },
+    "High Capacity (Large Data Only)": {
+        "model__hidden_layer_sizes": (150, 100, 50),
+        "model__alpha": 0.0005,
+        "model__learning_rate_init": 0.0005
+    }
+}
+
+INDUSTRY_PRESETS = {
+    "Linear Regression": LINEAR_PRESETS,
+    "Logistic Regression": LOGISTIC_PRESETS,
+    "GBM": GBM_PRESETS,
+    "Neural Network": NN_PRESETS
+}
+
+
+
 
 if 'final_df' not in st.session_state:
     st.session_state.final_df = None
@@ -392,6 +474,41 @@ with model_container:
             "Model",
             ["Linear Regression", "GBM", "Neural Network"]
         )
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("🛠️ Custom Hyperparameters (Advanced)")
+
+    use_custom_params = st.sidebar.checkbox(
+        "Manually set model hyperparameters",
+        value=False,
+        help="Use this only if you know what these parameters do. Overrides defaults."
+    )
+
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("🏭 Industry Presets")
+
+    use_presets = st.sidebar.checkbox(
+        "Use Industry Presets",
+        value=False,
+        help="Evaluate proven industry-standard configurations"
+    )
+
+    if use_presets:
+        preset_name = st.sidebar.selectbox(
+            "Preset Strategy",
+            list(INDUSTRY_PRESETS[model_choice].keys())
+        )
+
+    if use_custom_params:
+        custom_mode = st.sidebar.radio(
+            "Custom Hyperparameter Strategy",
+            [
+                "Evaluate with AI (Best model wins)",
+                "Force my hyperparameters (Override AI)"
+            ],
+            help="Choose whether your parameters should compete or override AI selection"
+        )
+    else:
+        custom_mode = "Evaluate with AI (Best model wins)"
 
     # --- Enable tuning ---
     enable_tuning = st.sidebar.checkbox(
@@ -399,6 +516,49 @@ with model_container:
         value=False,
         help="If checked, the AI will try random configurations to find the best one."
     )
+
+    custom_params = {}
+
+    if use_custom_params:
+        if model_choice == "GBM":
+            custom_params["model__learning_rate"] = st.sidebar.number_input(
+                "Learning Rate", 0.001, 1.0, 0.1, step=0.01
+            )
+            custom_params["model__n_estimators"] = st.sidebar.slider(
+                "Number of Trees", 50, 500, 100, step=25
+            )
+            custom_params["model__num_leaves"] = st.sidebar.slider(
+                "Tree Complexity (num_leaves)", 10, 100, 31
+            )
+
+
+        elif model_choice == "Linear Regression":
+
+            custom_params["model__alpha"] = st.sidebar.number_input(
+
+                "Regularization Strength (alpha)", 0.0001, 10.0, 1.0
+
+            )
+
+
+        elif model_choice == "Logistic Regression":
+
+            custom_params["model__C"] = st.sidebar.number_input(
+
+                "Inverse Regularization Strength (C)", 0.0001, 10.0, 1.0
+
+            )
+
+
+        elif model_choice == "Neural Network":
+            hidden = st.sidebar.selectbox(
+                "Hidden Layer Structure",
+                [(50,), (100,), (100, 50), (50, 25)]
+            )
+            custom_params["model__hidden_layer_sizes"] = hidden
+            custom_params["model__alpha"] = st.sidebar.number_input(
+                "L2 Regularization (alpha)", 0.00001, 0.1, 0.001
+            )
 
     # POWER USER FEATURE: Slider appears only if Tuning is ON
     if enable_tuning:
@@ -540,12 +700,48 @@ else:  # Neural Network
         "model__learning_rate_init": [0.001, 0.01]
     }
 
+
+
 pipeline = Pipeline([
    ("prep", preprocessor),
    ("model", model)
 ])
+
+
+
 # ------------------ Train ------------------
 if st.button("Train Model"):
+    model_scores = {}
+    model_objects = {}
+
+    # ==============================
+    # CUSTOM HYPERPARAMETER MODEL
+    # ==============================
+    from sklearn.base import clone
+
+    if use_custom_params and custom_params:
+        st.markdown("### 🛠️ Evaluating Custom Hyperparameter Model")
+
+        try:
+            custom_pipeline = clone(pipeline)
+            custom_pipeline.set_params(**custom_params)
+            custom_pipeline.fit(X_train, y_train)
+
+            if is_classification:
+                preds_custom = custom_pipeline.predict(X_test)
+                avg = 'binary' if is_binary else 'weighted'
+                custom_score = f1_score(y_test, preds_custom, average=avg, zero_division=0)
+            else:
+                custom_score = r2_score(y_test, custom_pipeline.predict(X_test))
+
+            model_scores["Custom (User Defined)"] = custom_score
+            model_objects["Custom (User Defined)"] = custom_pipeline
+
+            st.success(f"🛠️ Custom Model Score: {round(custom_score, 4)}")
+
+        except Exception as e:
+            st.error(f"Custom hyperparameter model failed: {e}")
+
     # 1. Train the "Champion" (Default Model)
     with st.spinner("Training Default Model (The Champion)..."):
         pipeline.fit(X_train, y_train)
@@ -561,6 +757,46 @@ if st.button("Train Model"):
             # Regression Mode
             baseline_score = r2_score(y_test, pipeline.predict(X_test))
             score_name = "R2 Score"
+    # ✅ Register Default Model
+    model_scores["Default"] = baseline_score
+    model_objects["Default"] = pipeline
+
+    # ==============================
+    # 🏭 INDUSTRY PRESET MODELS
+    # ==============================
+    if use_presets:
+        st.markdown("### 🏭 Evaluating Industry Presets")
+
+        preset_params = INDUSTRY_PRESETS[model_choice][preset_name]
+
+        try:
+            preset_pipeline = clone(pipeline)
+            safe_params = preset_params.copy()
+
+            # Remove unsupported params for HistGB
+            # Remove unsupported params for HistGradientBoosting
+            if not HAS_LGB:
+                safe_params.pop("model__num_leaves", None)
+                safe_params.pop("model__n_estimators", None)
+
+            preset_pipeline.set_params(**safe_params)
+
+            preset_pipeline.fit(X_train, y_train)
+
+            if is_classification:
+                preds_preset = preset_pipeline.predict(X_test)
+                avg = 'binary' if is_binary else 'weighted'
+                preset_score = f1_score(y_test, preds_preset, average=avg, zero_division=0)
+            else:
+                preset_score = r2_score(y_test, preset_pipeline.predict(X_test))
+
+            model_scores[f"Preset: {preset_name}"] = preset_score
+            model_objects[f"Preset: {preset_name}"] = preset_pipeline
+
+            st.success(f"🏭 Preset '{preset_name}' Score: {round(preset_score, 4)}")
+
+        except Exception as e:
+            st.error(f"Preset evaluation failed: {e}")
 
     # 2. Run the "Challenger" (Hyperparameter Tuning) - ONLY if checked
     if enable_tuning:
@@ -612,9 +848,12 @@ if st.button("Train Model"):
             else:
                 tuned_score = r2_score(y_test, best_model.predict(X_test))
 
+            # ✅ Register RandomSearch candidate
+            model_scores["RandomSearch"] = tuned_score
+            model_objects["RandomSearch"] = best_model
+
             # --- THE DECISION ---
             if tuned_score > baseline_score:
-                pipeline = best_model
                 improvement = (tuned_score - baseline_score)
                 st.success(f"🎉 **AI Optimization Successful!**")
                 st.markdown(
@@ -648,6 +887,40 @@ if st.button("Train Model"):
             status_text.empty()
     else:
         st.success(f"✅ Trained with Standard Settings ({score_name}: {baseline_score:.3f})")
+
+    # ==============================
+    # 📢 USER TRANSPARENCY MESSAGE
+    # ==============================
+    if use_custom_params and "Custom (User Defined)" in model_scores:
+        st.info(
+            "ℹ️ Custom hyperparameters were evaluated alongside AI-selected models. "
+            "Final selection is based on your chosen strategy."
+        )
+
+    # ==============================
+    # 🏆 FINAL MODEL SELECTION
+    # ==============================
+    if (
+            use_custom_params
+            and custom_mode == "Force my hyperparameters (Override AI)"
+            and "Custom (User Defined)" in model_objects
+    ):
+        pipeline = model_objects["Custom (User Defined)"]
+        winner_name = "Custom (User Defined)"
+
+        st.warning(
+            "⚠️ You chose to override AI selection.\n\n"
+            "The final model uses your custom hyperparameters "
+            "even if another model performed better."
+        )
+    else:
+        winner_name = max(model_scores, key=model_scores.get)
+        pipeline = model_objects[winner_name]
+
+    st.success(f"🏆 Final Model Selected: **{winner_name}**")
+    st.subheader("📊 Model Comparison")
+    df_scores = pd.DataFrame.from_dict(model_scores, orient="index", columns=["Score"])
+    st.dataframe(df_scores.sort_values("Score", ascending=False))
 
     # 3. Final Predictions
     preds = pipeline.predict(X_test)
@@ -957,8 +1230,8 @@ if st.button("Train Model"):
 
     with c4:
         st.markdown("#### 4️⃣ What mistakes will I make?")
-        if is_binary:
-            # We use the raw confusion matrix 'cm' (Actual=Rows, Pred=Cols)
+        if is_binary and "cm" in locals():
+            # Confusion matrix computed in sklearn format, then transposed for business-friendly display
             if cm.shape == (2, 2):
                 tn, fp, fn, tp = cm.ravel()
             else:
@@ -966,16 +1239,18 @@ if st.button("Train Model"):
 
             if fp > fn:
                 st.error(
-                    "⚠️ **False Alarms (Type I Error):** The model is 'Trigger Happy'. You will waste resources on people who won't convert.")
+                    "⚠️ **False Alarms (Type I Error):** The model is 'Trigger Happy'. "
+                    "You will waste resources on people who won't convert."
+                )
             elif fn > fp:
                 st.error(
-                    "⚠️ **Missed Opportunities (Type II Error):** The model is 'Too Careful'. You will miss valuable targets.")
+                    "⚠️ **Missed Opportunities (Type II Error):** The model is 'Too Careful'. "
+                    "You will miss valuable targets."
+                )
             else:
                 st.info("💡 **Balanced:** The model makes False Positives and Negatives at roughly the same rate.")
         else:
-            mae = metrics["MAE"]
-            st.error(
-                f"⚠️ **Budgeting Error:** Predictions are wrong by **{mae:.2f}** on average. Can your business margin handle this variance?")
+            st.info("ℹ️ Confusion-based risk analysis is not applicable for this model.")
 
     # ======================================
     # ======================================
@@ -1008,8 +1283,14 @@ if st.button("Train Model"):
                 n_jobs=1
             )
 
+        try:
+            feature_names = pipeline.named_steps["prep"].get_feature_names_out()
+            feature_names = [f.replace("num__", "").replace("cat__", "") for f in feature_names]
+        except:
+            feature_names = X_test.columns
+
         perm_df = pd.DataFrame({
-            "Feature": X_test.columns,
+            "Feature": feature_names,
             "Perm_Importance": perm_result.importances_mean,
             "Perm_Std": perm_result.importances_std
         })
@@ -1237,9 +1518,10 @@ if st.button("Train Model"):
         final_df = pd.concat([final_df, future], axis=0)
 
 
-if predict_only:
-    final_df = final_df[final_df["Row_Type"] == "Predict"]
-    st.info("Displaying/Downloading 'Predict' rows only.")
+    if predict_only:
+        final_df = final_df[final_df["Row_Type"] == "Predict"]
+        st.info("Displaying/Downloading 'Predict' rows only.")
+
 
 # FIX: Decode predictions back to original labels
 if (
