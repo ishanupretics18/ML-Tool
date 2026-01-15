@@ -454,6 +454,12 @@ else:
         st.info("Target is numeric, but no numeric features found for correlation.")
 # ------------------ Model Selection ------------------
 with model_container:
+    compare_models = st.sidebar.checkbox(
+        "🔍 Compare all selected models (Recommended)",
+        value=True,
+        help="If enabled, all selected models are evaluated and the best one is automatically selected."
+    )
+
     # UPDATED: Use 'is_classification' instead of 'is_binary'
     if is_classification:
         model_choice = st.selectbox(
@@ -483,6 +489,69 @@ with model_container:
         help="Use this only if you know what these parameters do. Overrides defaults."
     )
 
+    custom_params = {}
+
+    if use_custom_params:
+        st.sidebar.markdown("⚙️ Custom Hyperparameters")
+
+        if model_choice == "Logistic Regression":
+            custom_params["model__C"] = st.sidebar.number_input(
+                "C (Regularization Strength)", 0.001, 100.0, 1.0
+            )
+            custom_params["model__max_iter"] = st.sidebar.number_input(
+                "Max Iterations", 100, 5000, 1000
+            )
+
+        elif model_choice == "Linear Regression":
+            custom_params["model__alpha"] = st.sidebar.number_input(
+                "Alpha (Regularization)", 0.001, 100.0, 1.0
+            )
+
+
+        elif model_choice == "GBM":
+
+            custom_params["model__learning_rate"] = st.sidebar.number_input(
+
+                "Learning Rate", 0.001, 0.5, 0.1
+
+            )
+
+            if HAS_LGB:
+
+                custom_params["model__n_estimators"] = st.sidebar.number_input(
+
+                    "Estimators", 50, 1000, 200
+
+                )
+
+            else:
+
+                custom_params["model__max_iter"] = st.sidebar.number_input(
+
+                    "Iterations", 50, 1000, 200
+
+                )
+
+
+        elif model_choice == "Neural Network":
+            custom_params["model__alpha"] = st.sidebar.number_input(
+                "L2 Alpha", 0.00001, 0.1, 0.001
+            )
+            custom_params["model__learning_rate_init"] = st.sidebar.number_input(
+                "Learning Rate", 0.0001, 0.1, 0.001
+            )
+
+    if use_custom_params:
+        custom_mode = st.sidebar.radio(
+            "Final Model Rule",
+            [
+                "Best model wins (Recommended)",
+                "Always use my custom model"
+            ]
+        )
+    else:
+        custom_mode = "Best model wins (Recommended)"
+
     st.sidebar.markdown("---")
     st.sidebar.subheader("🏭 Industry Presets")
 
@@ -498,17 +567,7 @@ with model_container:
             list(INDUSTRY_PRESETS[model_choice].keys())
         )
 
-    if use_custom_params:
-        custom_mode = st.sidebar.radio(
-            "Custom Hyperparameter Strategy",
-            [
-                "Evaluate with AI (Best model wins)",
-                "Force my hyperparameters (Override AI)"
-            ],
-            help="Choose whether your parameters should compete or override AI selection"
-        )
-    else:
-        custom_mode = "Evaluate with AI (Best model wins)"
+
 
     # --- Enable tuning ---
     enable_tuning = st.sidebar.checkbox(
@@ -517,48 +576,7 @@ with model_container:
         help="If checked, the AI will try random configurations to find the best one."
     )
 
-    custom_params = {}
 
-    if use_custom_params:
-        if model_choice == "GBM":
-            custom_params["model__learning_rate"] = st.sidebar.number_input(
-                "Learning Rate", 0.001, 1.0, 0.1, step=0.01
-            )
-            custom_params["model__n_estimators"] = st.sidebar.slider(
-                "Number of Trees", 50, 500, 100, step=25
-            )
-            custom_params["model__num_leaves"] = st.sidebar.slider(
-                "Tree Complexity (num_leaves)", 10, 100, 31
-            )
-
-
-        elif model_choice == "Linear Regression":
-
-            custom_params["model__alpha"] = st.sidebar.number_input(
-
-                "Regularization Strength (alpha)", 0.0001, 10.0, 1.0
-
-            )
-
-
-        elif model_choice == "Logistic Regression":
-
-            custom_params["model__C"] = st.sidebar.number_input(
-
-                "Inverse Regularization Strength (C)", 0.0001, 10.0, 1.0
-
-            )
-
-
-        elif model_choice == "Neural Network":
-            hidden = st.sidebar.selectbox(
-                "Hidden Layer Structure",
-                [(50,), (100,), (100, 50), (50, 25)]
-            )
-            custom_params["model__hidden_layer_sizes"] = hidden
-            custom_params["model__alpha"] = st.sidebar.number_input(
-                "L2 Regularization (alpha)", 0.00001, 0.1, 0.001
-            )
 
     # POWER USER FEATURE: Slider appears only if Tuning is ON
     if enable_tuning:
@@ -571,12 +589,12 @@ with model_container:
     else:
         tuning_iter = 10  # Fallback default
 
-    #Refit Strategy Checkbox (Defined in Sidebar to prevent app reset)
-    refit_strategy = st.sidebar.checkbox(
-        "🚀 Retrain on 100% data for predictions",
-        value=False,
-        help="Maximize accuracy by using all available data (Train + Test) for the final CSV."
-    )
+#Refit Strategy Checkbox (Defined in Sidebar to prevent app reset)
+refit_strategy = st.sidebar.checkbox(
+    "🚀 Retrain on 100% data for predictions",
+    value=False,
+    help="Maximize accuracy by using all available data (Train + Test) for the final CSV."
+)
 
 
 # ------------------ Preprocessing ------------------
@@ -752,11 +770,12 @@ if st.button("Train Model"):
             y_pred_def = pipeline.predict(X_test)
             score_avg = 'binary' if is_binary else 'weighted'
             baseline_score = f1_score(y_test, y_pred_def, average=score_avg, zero_division=0)
-            score_name = "F1 Score"
         else:
-            # Regression Mode
             baseline_score = r2_score(y_test, pipeline.predict(X_test))
-            score_name = "R2 Score"
+
+        # 🔒 FORCE score_name definition (Bug 3 fix)
+        score_name = "F1 Score" if is_classification else "R2 Score"
+
     # ✅ Register Default Model
     model_scores["Default"] = baseline_score
     model_objects["Default"] = pipeline
@@ -852,30 +871,6 @@ if st.button("Train Model"):
             model_scores["RandomSearch"] = tuned_score
             model_objects["RandomSearch"] = best_model
 
-            # --- THE DECISION ---
-            if tuned_score > baseline_score:
-                improvement = (tuned_score - baseline_score)
-                st.success(f"🎉 **AI Optimization Successful!**")
-                st.markdown(
-                    f"The AI beat the default settings. **{score_name} improved by {improvement:.3f}** (from {baseline_score:.3f} to {tuned_score:.3f}).")
-
-                best_params = search.best_params_
-                translator = {
-                    "model__C": "Strictness (C)", "model__alpha": "Smoothing (Alpha)",
-                    "model__learning_rate": "Learning Speed", "model__n_estimators": "Number of Trees",
-                    "model__num_leaves": "Tree Complexity", "model__max_depth": "Max Depth",
-                    "model__hidden_layer_sizes": "Neural Layers", "model__learning_rate_init": "Init Speed"
-                }
-                msg = []
-                for k, v in best_params.items():
-                    name = translator.get(k, k.replace('model__', ''))
-                    val_str = f"{v:.4f}" if isinstance(v, (float, np.floating)) else str(v)
-                    msg.append(f"**{name}:** {val_str}")
-                st.info(f"**Winning Settings:** " + ", ".join(msg))
-            else:
-                st.info(f"ℹ️ **Optimization Result:** The default model was already excellent.")
-                st.markdown(
-                    f"The AI tried {tuning_iter} variations but none beat the default {score_name} of **{baseline_score:.3f}**. We kept the safe default model.")
 
         except MemoryError:
             st.error("⛔ **Server Overload:** The dataset is too large to tune.")
@@ -897,38 +892,74 @@ if st.button("Train Model"):
             "Final selection is based on your chosen strategy."
         )
 
-    # ==============================
-    # 🏆 FINAL MODEL SELECTION
-    # ==============================
-    if (
-            use_custom_params
-            and custom_mode == "Force my hyperparameters (Override AI)"
-            and "Custom (User Defined)" in model_objects
-    ):
-        pipeline = model_objects["Custom (User Defined)"]
-        winner_name = "Custom (User Defined)"
-
-        st.warning(
-            "⚠️ You chose to override AI selection.\n\n"
-            "The final model uses your custom hyperparameters "
-            "even if another model performed better."
+    if compare_models:
+        st.subheader("📊 Model Comparison")
+        st.dataframe(
+            pd.DataFrame.from_dict(model_scores, orient="index", columns=["Score"])
+            .sort_values("Score", ascending=False)
         )
+
+    # ==============================
+    # 🏆 FINAL MODEL SELECTION (AUTHORITATIVE)
+    # ==============================
+
+    winner_name = None
+    winner_reason = None
+
+    if compare_models:
+        # User explicitly forces custom model
+        if (
+                use_custom_params
+                and custom_mode == "Always use my custom model"
+                and "Custom (User Defined)" in model_objects
+        ):
+            winner_name = "Custom (User Defined)"
+            winner_reason = "User-forced custom hyperparameters override all comparisons."
+
+        else:
+            # Pick best scoring model
+            winner_name = max(model_scores, key=model_scores.get)
+            winner_reason = "Selected highest performing model across all evaluated candidates."
+
     else:
-        winner_name = max(model_scores, key=model_scores.get)
-        pipeline = model_objects[winner_name]
+        # No comparison → safe defaults
+        if (
+                use_custom_params
+                and custom_mode == "Always use my custom model"
+                and "Custom (User Defined)" in model_objects
+        ):
+            winner_name = "Custom (User Defined)"
+            winner_reason = "User forced custom model without comparison."
+        else:
+            winner_name = "Default"
+            winner_reason = "Comparison disabled. Default safe model selected."
+
+    # 🔒 FINAL ASSIGNMENT (ONLY PLACE WHERE PIPELINE IS SET)
+    pipeline = model_objects[winner_name]
+
+    # ==============================
+    # 📢 FINAL USER COMMUNICATION
+    # ==============================
 
     st.success(f"🏆 Final Model Selected: **{winner_name}**")
-    st.subheader("📊 Model Comparison")
-    df_scores = pd.DataFrame.from_dict(model_scores, orient="index", columns=["Score"])
-    st.dataframe(df_scores.sort_values("Score", ascending=False))
+    st.caption(f"Reason: {winner_reason}")
+
+    # AI transparency (informational only)
+    if enable_tuning and "RandomSearch" in model_scores:
+        if winner_name != "RandomSearch":
+            st.info(
+                "ℹ️ AI hyperparameter tuning was attempted, "
+                "but another model was selected due to better performance or user preference."
+            )
+
 
     # 3. Final Predictions
     preds = pipeline.predict(X_test)
+    effective_threshold = 0.5
 
     # --- Threshold Logic (Binary Only) ---
     if is_binary and hasattr(pipeline.named_steps["model"], "predict_proba"):
-        classes = sorted(y_test.unique())
-        y_bin = (y_test == classes[1]).astype(int)
+        y_bin = y_test.astype(int)
         proba = pipeline.predict_proba(X_test)[:, 1]
 
         from sklearn.metrics import precision_recall_curve
@@ -937,24 +968,30 @@ if st.button("Train Model"):
             best_threshold = threshold
         else:
             precisions, recalls, ths = precision_recall_curve(y_bin, proba)
+            valid_len = len(ths)
+
             if threshold_mode == "Optimize for Recall":
-                idx = recalls.argmax()
+                idx = np.argmax(recalls[:valid_len])
             elif threshold_mode == "Optimize for Precision":
-                idx = precisions.argmax()
+                idx = np.argmax(precisions[:valid_len])
             else:
                 f1_scores = 2 * (precisions * recalls) / (precisions + recalls + 1e-9)
-                idx = f1_scores.argmax()
-            best_threshold = ths[idx] if idx < len(ths) else 0.5
+                idx = np.argmax(f1_scores[:valid_len])
+
+            best_threshold = float(ths[idx]) if valid_len > 0 else 0.5
 
             st.info(f"Using optimized threshold: {round(float(best_threshold), 3)}")
 
         effective_threshold = float(best_threshold)
         preds = (proba >= effective_threshold).astype(int)
 
+
     elif is_binary:
-        classes = sorted(y_test.unique())
-        y_bin = (y_test == classes[1]).astype(int)
-        preds = (preds == classes[1]).astype(int)
+
+        y_bin = y_test.astype(int)
+
+        preds = preds.astype(int)
+
         proba = None
 
     col1, col2 = st.columns([1, 2])
@@ -1012,6 +1049,8 @@ if st.button("Train Model"):
                 st.warning("Model is struggling (F1 < 0.6). Check your data.")
             else:
                 st.success("Model performance is solid.")
+
+            cm = None
 
             # --- RESTORED: Header ---
             st.subheader("Confusion Matrix")
@@ -1150,7 +1189,8 @@ if st.button("Train Model"):
         st.markdown("#### 1️⃣ What question does this answer?")
         if is_binary:
             st.info(f"**\"Is {target} likely to occur?\"**")
-            st.markdown(f"It predicts the probability of the **{classes[1]}** class.")
+            positive_label = le.inverse_transform([1])[0] if le is not None else "Positive Class"
+            st.markdown(f"It predicts the probability of the **{positive_label}** class.")
         else:
             st.info(f"**\"What is the expected value of {target}?\"**")
             st.markdown("It estimates the numerical value based on the features provided.")
@@ -1230,10 +1270,13 @@ if st.button("Train Model"):
 
     with c4:
         st.markdown("#### 4️⃣ What mistakes will I make?")
-        if is_binary and "cm" in locals():
+        if is_binary and 'cm' in locals() and cm is not None:
             # Confusion matrix computed in sklearn format, then transposed for business-friendly display
             if cm.shape == (2, 2):
-                tn, fp, fn, tp = cm.ravel()
+                tp = cm[0, 0]
+                fn = cm[0, 1]
+                fp = cm[1, 0]
+                tn = cm[1, 1]
             else:
                 tn = fp = fn = tp = 0
 
@@ -1288,6 +1331,9 @@ if st.button("Train Model"):
             feature_names = [f.replace("num__", "").replace("cat__", "") for f in feature_names]
         except:
             feature_names = X_test.columns
+
+        if len(feature_names) != len(perm_result.importances_mean):
+            feature_names = [f"Feature_{i}" for i in range(len(perm_result.importances_mean))]
 
         perm_df = pd.DataFrame({
             "Feature": feature_names,
@@ -1437,7 +1483,7 @@ if st.button("Train Model"):
 
     # ------------------ Save Outputs ------------------
     os.makedirs("models", exist_ok=True)
-    model_path = f"models/{model_choice.replace(' ', '_')}.joblib"
+    model_path = f"models/{winner_name.replace(' ', '_')}.joblib"
     joblib.dump(pipeline, model_path)
 
     st.success(f"Model saved: {model_path}")
@@ -1527,7 +1573,7 @@ if st.button("Train Model"):
 if (
         is_classification
         and le is not None
-        and "final_df" in locals()
+        and not final_df.empty
         and "y_pred" in final_df.columns
 ):
     try:
