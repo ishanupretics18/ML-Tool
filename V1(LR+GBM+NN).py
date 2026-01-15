@@ -1569,22 +1569,24 @@ if st.button("Train Model"):
         st.info("Displaying/Downloading 'Predict' rows only.")
 
 
-# FIX: Decode predictions back to original labels
+# FIX: Decode predictions back to original labels (SAFE)
 if (
         is_classification
         and le is not None
-        and not final_df.empty
-        and "y_pred" in final_df.columns
+        and st.session_state.get("final_df") is not None
+        and not st.session_state.final_df.empty
+        and "y_pred" in st.session_state.final_df.columns
 ):
     try:
-        valid_mask = final_df["y_pred"].notna()
-        final_df.loc[valid_mask, "y_pred_label"] = (
+        valid_mask = st.session_state.final_df["y_pred"].notna()
+        st.session_state.final_df.loc[valid_mask, "y_pred_label"] = (
             le.inverse_transform(
-                final_df.loc[valid_mask, "y_pred"].astype(int)
+                st.session_state.final_df.loc[valid_mask, "y_pred"].astype(int)
             )
         )
     except Exception as e:
         st.warning(f"Label decoding skipped: {e}")
+
 # ===========================
 # ===========================
 # FINAL GUARANTEE (CRITICAL)
