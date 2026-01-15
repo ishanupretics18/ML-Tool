@@ -4,8 +4,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 import joblib
 import os
-import time
-from sklearn.base import clone
 
 from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
@@ -16,7 +14,7 @@ from sklearn.inspection import permutation_importance
 from sklearn.model_selection import RandomizedSearchCV
 from sklearn.metrics import roc_curve
 from sklearn.linear_model import (
-   LinearRegression, Ridge, Lasso, ElasticNet, LogisticRegression
+   Ridge, LogisticRegression
 )
 from sklearn.neural_network import MLPRegressor, MLPClassifier
 from sklearn.ensemble import HistGradientBoostingRegressor, HistGradientBoostingClassifier
@@ -100,7 +98,7 @@ NN_PRESETS = {
 }
 
 INDUSTRY_PRESETS = {
-    "Linear Regression": LINEAR_PRESETS,
+    "Ridge Regression": LINEAR_PRESETS,
     "Logistic Regression": LOGISTIC_PRESETS,
     "GBM": GBM_PRESETS,
     "Neural Network": NN_PRESETS
@@ -147,7 +145,7 @@ if file is None:
            </p>
            <p>
                Supported models:
-               <br>• Linear Regression
+               <br>• Ridge Regression
                <br>• Logistic Regression
                <br>• Gradient Boosting
                <br>• Neural Networks
@@ -478,7 +476,7 @@ with model_container:
     else:
         model_choice = st.selectbox(
             "Model",
-            ["Linear Regression", "GBM", "Neural Network"]
+            ["Ridge Regression", "GBM", "Neural Network"]
         )
     st.sidebar.markdown("---")
     st.sidebar.subheader("🛠️ Custom Hyperparameters (Advanced)")
@@ -502,7 +500,7 @@ with model_container:
                 "Max Iterations", 100, 5000, 1000
             )
 
-        elif model_choice == "Linear Regression":
+        elif model_choice == "Ridge Regression":
             custom_params["model__alpha"] = st.sidebar.number_input(
                 "Alpha (Regularization)", 0.001, 100.0, 1.0
             )
@@ -671,7 +669,7 @@ X_train, X_test, y_train, y_test = train_test_split(
 )
 
 # ------------------ Model Init & Params ------------------
-if model_choice == "Linear Regression":
+if model_choice == "Ridge Regression":
     model = Ridge()
     param_dist = {"model__alpha": np.logspace(-2, 2, 10)}
 
@@ -774,9 +772,6 @@ if st.button("Train Model"):
             baseline_score = f1_score(y_test, y_pred_def, average=score_avg, zero_division=0)
         else:
             baseline_score = r2_score(y_test, pipeline.predict(X_test))
-
-        # 🔒 FORCE score_name definition (Bug 3 fix)
-        score_name = "F1 Score" if is_classification else "R2 Score"
 
     # ✅ Register Default Model
     model_scores["Default"] = baseline_score
@@ -1188,7 +1183,7 @@ if st.button("Train Model"):
         st.markdown("#### 2️⃣ What assumptions are made?")
 
         # --- LOGIC FOR LINEAR MODELS ---
-        if model_choice in ["Linear Regression", "Logistic Regression"]:
+        if model_choice in ["Ridge Regression", "Logistic Regression"]:
             st.write("• **Linearity:** Assumes straight-line relationships.")
 
             # Check Correlation (VIF Proxy)
@@ -1238,18 +1233,29 @@ if st.button("Train Model"):
         st.markdown("#### 3️⃣ When will it lie to me?")
         liar_list = []
 
-        # Performance checks
-        if is_binary:
-            if metrics["ROC AUC"] != "N/A" and metrics["ROC AUC"] < 0.65:
+        # --- Classification logic ---
+        if is_classification:
+            if (
+                    is_binary
+                    and metrics.get("ROC AUC") != "N/A"
+                    and metrics.get("ROC AUC", 1) < 0.65
+            ):
                 liar_list.append(
-                    "⚠️ **Uncertainty:** The model is guessing often (AUC < 0.65). Don't trust its confidence scores.")
-        else:
-            if metrics["R2"] < 0.3:
-                liar_list.append("⚠️ **Weak Signal:** The model only explains a tiny part of the variation (<30%).")
+                    "⚠️ **Uncertainty:** The model is guessing often (AUC < 0.65). "
+                    "Do not trust probability scores."
+                )
 
-        # General checks
+        # --- Regression logic ---
+        else:
+            if metrics.get("R2", 1) < 0.3:
+                liar_list.append(
+                    "⚠️ **Weak Signal:** The model explains very little variation (<30%)."
+                )
+
+        # General warning (always applicable)
         liar_list.append(
-            "⚠️ **Data Drift:** If market conditions change (e.g., inflation, new laws), these predictions will fail immediately.")
+            "⚠️ **Data Drift Risk:** If real-world conditions change, predictions may fail."
+        )
 
         if not liar_list:
             st.success("✅ The model is statistically robust on this test data.")
@@ -1319,47 +1325,8 @@ if st.button("Train Model"):
         # ===============================
         # 🔧 AUTHORITATIVE FEATURE NAMES (NO GUESSING)
         # ===============================
-        try:
-            # ===============================
-            # 🔧 FEATURE-LEVEL PERMUTATION (CORRECT)
-            # ===============================
-            feature_names = X_test.columns.tolist()
-
-            # HARD ASSERT — this SHOULD match
-            if len(feature_names) != len(perm_result.importances_mean):
-                st.error(
-                    f"⛔ INTERNAL ERROR:\n"
-                    f"Raw features = {len(feature_names)}\n"
-                    f"Permutation features = {len(perm_result.importances_mean)}\n\n"
-                    f"This should never happen."
-                )
-                st.stop()
-
-            # Remove sklearn prefixes
-            feature_names = [
-                name.replace("num__", "").replace("cat__", "")
-                for name in feature_names
-            ]
-
-        except Exception as e:
-            st.error(
-                "⛔ Feature name extraction failed. "
-                "Upgrade sklearn to >= 1.0 to fix this."
-            )
-            st.stop()
-
-        # HARD ASSERT — DO NOT FALL BACK
-        if len(feature_names) != len(perm_result.importances_mean):
-            st.error(
-                f"⛔ INTERNAL ERROR:\n"
-                f"Preprocessor features = {len(feature_names)}\n"
-                f"Permutation features = {len(perm_result.importances_mean)}\n\n"
-                f"This indicates a preprocessing / encoder mismatch."
-            )
-            st.stop()
-
         perm_df = pd.DataFrame({
-            "Feature": feature_names,
+            "Feature": X_test.columns,
             "Perm_Importance": perm_result.importances_mean,
             "Perm_Std": perm_result.importances_std
         })
@@ -1448,7 +1415,7 @@ if st.button("Train Model"):
             if len(hidden) > 0:
                 alerts.append(
                     f"⚠️ **Hidden Drivers:** {', '.join(hidden['Feature'].head(3))} "
-                    "strongly impact predictions despite low model visibility."
+                    "strongly impact predictions."
                 )
 
         harmful = perm_df[perm_df["Perm_Importance"] < 0]
@@ -1496,10 +1463,12 @@ if st.button("Train Model"):
         st.info(
             "This analysis verifies whether the model is **actually using** the features it claims are important.\n\n"
             "• Green features are **true business drivers**.\n"
-            "• Red features actively harm decision quality.\n"
+            "• Near-zero features have little or no impact.\n"
+            "• Red features (rare) indicate harmful signals or data leakage.\n"
             "• Alerts indicate bias, redundancy, or instability.\n\n"
             "**Action:** Trust only features confirmed by permutation importance."
         )
+
 
     except Exception as e:
         st.error(f"Feature importance analysis failed: {e}")
@@ -1593,12 +1562,24 @@ if st.button("Train Model"):
 
 
 # FIX: Decode predictions back to original labels (SAFE)
+
+# ===========================
+# ===========================
+# FINAL GUARANTEE (CRITICAL)
+# ===========================
+if "final_df" in locals():
+    st.session_state.final_df = final_df
+    st.session_state.model_trained = True
+
+# ===========================
+# LABEL DECODING (FINAL SAFE)
+# ===========================
 if (
-        is_classification
-        and le is not None
-        and st.session_state.get("final_df") is not None
-        and not st.session_state.final_df.empty
-        and "y_pred" in st.session_state.final_df.columns
+    is_classification
+    and le is not None
+    and st.session_state.get("final_df") is not None
+    and not st.session_state.final_df.empty
+    and "y_pred" in st.session_state.final_df.columns
 ):
     try:
         valid_mask = st.session_state.final_df["y_pred"].notna()
@@ -1610,13 +1591,6 @@ if (
     except Exception as e:
         st.warning(f"Label decoding skipped: {e}")
 
-# ===========================
-# ===========================
-# FINAL GUARANTEE (CRITICAL)
-# ===========================
-if "final_df" in locals():
-    st.session_state.final_df = final_df
-    st.session_state.model_trained = True
 
     # SAFE DISPLAY (uses session_state)
     if st.session_state.get("final_df") is not None:
