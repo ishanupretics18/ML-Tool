@@ -883,15 +883,6 @@ if st.button("Train Model"):
     else:
         st.success(f"✅ Trained with Standard Settings ({score_name}: {baseline_score:.3f})")
 
-    # ==============================
-    # 📢 USER TRANSPARENCY MESSAGE
-    # ==============================
-    if use_custom_params and "Custom (User Defined)" in model_scores:
-        st.info(
-            "ℹ️ Custom hyperparameters were evaluated alongside AI-selected models. "
-            "Final selection is based on your chosen strategy."
-        )
-
     if compare_models:
         st.subheader("📊 Model Comparison")
         st.dataframe(
@@ -943,15 +934,6 @@ if st.button("Train Model"):
 
     st.success(f"🏆 Final Model Selected: **{winner_name}**")
     st.caption(f"Reason: {winner_reason}")
-
-    # AI transparency (informational only)
-    if enable_tuning and "RandomSearch" in model_scores:
-        if winner_name != "RandomSearch":
-            st.info(
-                "ℹ️ AI hyperparameter tuning was attempted, "
-                "but another model was selected due to better performance or user preference."
-            )
-
 
     # 3. Final Predictions
     preds = pipeline.predict(X_test)
