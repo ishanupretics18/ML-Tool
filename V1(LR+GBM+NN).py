@@ -1308,27 +1308,39 @@ if st.button("Train Model"):
                 n_jobs=1
             )
 
-        # --- FIX: Correct Feature Name Extraction for Permutation Importance ---
-        prep = pipeline.named_steps["prep"]
-
-        feature_names = []
-
-        # Numeric features (unchanged)
-        if len(num_cols) > 0:
-            feature_names.extend(num_cols)
-
-        # Categorical features (expanded via OneHotEncoder)
-        if len(cat_cols) > 0:
-            ohe = prep.named_transformers_["cat"].named_steps["onehot"]
-            ohe_feature_names = ohe.get_feature_names_out(cat_cols)
-            feature_names.extend(ohe_feature_names.tolist())
-
-        # Final safety check
-        if len(feature_names) != len(perm_result.importances_mean):
-            st.warning(
-                "⚠️ Feature name mismatch detected. Falling back to indexed names."
+        # ===============================
+        # 🔧 AUTHORITATIVE FEATURE NAMES (NO GUESSING)
+        # ===============================
+        try:
+            feature_names = (
+                pipeline
+                .named_steps["prep"]
+                .get_feature_names_out()
+                .tolist()
             )
-            feature_names = [f"Feature_{i}" for i in range(len(perm_result.importances_mean))]
+
+            # Remove sklearn prefixes
+            feature_names = [
+                name.replace("num__", "").replace("cat__", "")
+                for name in feature_names
+            ]
+
+        except Exception as e:
+            st.error(
+                "⛔ Feature name extraction failed. "
+                "Upgrade sklearn to >= 1.0 to fix this."
+            )
+            st.stop()
+
+        # HARD ASSERT — DO NOT FALL BACK
+        if len(feature_names) != len(perm_result.importances_mean):
+            st.error(
+                f"⛔ INTERNAL ERROR:\n"
+                f"Preprocessor features = {len(feature_names)}\n"
+                f"Permutation features = {len(perm_result.importances_mean)}\n\n"
+                f"This indicates a preprocessing / encoder mismatch."
+            )
+            st.stop()
 
         perm_df = pd.DataFrame({
             "Feature": feature_names,
