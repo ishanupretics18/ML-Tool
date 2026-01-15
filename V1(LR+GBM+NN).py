@@ -1308,13 +1308,26 @@ if st.button("Train Model"):
                 n_jobs=1
             )
 
-        try:
-            feature_names = pipeline.named_steps["prep"].get_feature_names_out()
-            feature_names = [f.replace("num__", "").replace("cat__", "") for f in feature_names]
-        except:
-            feature_names = X_test.columns
+        # --- FIX: Correct Feature Name Extraction for Permutation Importance ---
+        prep = pipeline.named_steps["prep"]
 
+        feature_names = []
+
+        # Numeric features (unchanged)
+        if len(num_cols) > 0:
+            feature_names.extend(num_cols)
+
+        # Categorical features (expanded via OneHotEncoder)
+        if len(cat_cols) > 0:
+            ohe = prep.named_transformers_["cat"].named_steps["onehot"]
+            ohe_feature_names = ohe.get_feature_names_out(cat_cols)
+            feature_names.extend(ohe_feature_names.tolist())
+
+        # Final safety check
         if len(feature_names) != len(perm_result.importances_mean):
+            st.warning(
+                "⚠️ Feature name mismatch detected. Falling back to indexed names."
+            )
             feature_names = [f"Feature_{i}" for i in range(len(perm_result.importances_mean))]
 
         perm_df = pd.DataFrame({
