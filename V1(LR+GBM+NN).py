@@ -745,6 +745,7 @@ if st.button("Train Model"):
             custom_pipeline.set_params(**custom_params)
             custom_pipeline.fit(X_train, y_train)
 
+
             if is_classification:
                 preds_custom = custom_pipeline.predict(X_test)
                 avg = 'binary' if is_binary else 'weighted'
@@ -763,6 +764,7 @@ if st.button("Train Model"):
     # 1. Train the "Champion" (Default Model)
     with st.spinner("Training Default Model (The Champion)..."):
         pipeline.fit(X_train, y_train)
+        score_name = "F1 Score" if is_classification else "R2 Score"
 
         # --- FIX: Correct Scoring Logic ---
         # We split Classification vs Regression immediately
@@ -1001,7 +1003,12 @@ if st.button("Train Model"):
             "Precision": precision_score(y_test, preds, average=avg_method, zero_division=0),
             "Recall": recall_score(y_test, preds, average=avg_method, zero_division=0),
             "F1": f1_score(y_test, preds, average=avg_method, zero_division=0),
-            "ROC AUC": roc_auc_score(y_test, proba) if (is_binary and proba is not None) else "N/A",
+            "ROC AUC": (
+                roc_auc_score(y_test, proba)
+                if is_binary and proba is not None and len(np.unique(y_test)) > 1
+                else "N/A"
+            ),
+
             "Effective Threshold": round(float(effective_threshold), 3) if 'effective_threshold' in locals() else 0.5
         }
 
@@ -1252,13 +1259,14 @@ if st.button("Train Model"):
 
     with c4:
         st.markdown("#### 4️⃣ What mistakes will I make?")
-        if is_binary and 'cm' in locals() and cm is not None:
+        if is_binary and 'cm' in locals() and cm is not None and 'cm_df' in locals():
             # Confusion matrix computed in sklearn format, then transposed for business-friendly display
             if cm.shape == (2, 2):
-                tp = cm[0, 0]
-                fn = cm[0, 1]
-                fp = cm[1, 0]
-                tn = cm[1, 1]
+                # cm is transposed with labels=[1,0]
+                tp = cm_df.loc[f"Pred: {label_1}", f"Actual: {label_1}"]
+                fp = cm_df.loc[f"Pred: {label_1}", f"Actual: {label_0}"]
+                fn = cm_df.loc[f"Pred: {label_0}", f"Actual: {label_1}"]
+                tn = cm_df.loc[f"Pred: {label_0}", f"Actual: {label_0}"]
             else:
                 tn = fp = fn = tp = 0
 
@@ -1312,12 +1320,20 @@ if st.button("Train Model"):
         # 🔧 AUTHORITATIVE FEATURE NAMES (NO GUESSING)
         # ===============================
         try:
-            feature_names = (
-                pipeline
-                .named_steps["prep"]
-                .get_feature_names_out()
-                .tolist()
-            )
+            # ===============================
+            # 🔧 FEATURE-LEVEL PERMUTATION (CORRECT)
+            # ===============================
+            feature_names = X_test.columns.tolist()
+
+            # HARD ASSERT — this SHOULD match
+            if len(feature_names) != len(perm_result.importances_mean):
+                st.error(
+                    f"⛔ INTERNAL ERROR:\n"
+                    f"Raw features = {len(feature_names)}\n"
+                    f"Permutation features = {len(perm_result.importances_mean)}\n\n"
+                    f"This should never happen."
+                )
+                st.stop()
 
             # Remove sklearn prefixes
             feature_names = [
