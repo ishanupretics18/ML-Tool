@@ -1479,7 +1479,7 @@ if st.button("Train Model"):
         # ======================================================
         st.markdown("### 📊 Top Drivers (Permutation = Ground Truth)")
 
-        plot_df = perm_df.head(20).sort_values("Perm_Importance")
+        plot_df = perm_df.sort_values("Perm_Importance")
 
         fig, ax = plt.subplots(figsize=(10, 6))
         colors = ["#e53935" if v < 0 else "#4caf50" for v in plot_df["Perm_Importance"]]
