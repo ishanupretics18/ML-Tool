@@ -479,7 +479,8 @@ with model_container:
             ["Linear Regression", "GBM", "Neural Network"]
         )
     st.sidebar.markdown("---")
-    st.sidebar.subheader("🛠️ Custom Hyperparameters (Advanced)")
+
+    st.sidebar.header("⚙️ Optimization Strategy")
 
     use_custom_params = st.sidebar.checkbox(
         "Manually set model hyperparameters",
@@ -551,7 +552,6 @@ with model_container:
         custom_mode = "Best model wins (Recommended)"
 
     st.sidebar.markdown("---")
-    st.sidebar.subheader("🏭 Industry Presets")
 
     use_presets = st.sidebar.checkbox(
         "Use Industry Presets",
@@ -570,7 +570,7 @@ with model_container:
 
     # --- Enable tuning ---
     enable_tuning = st.sidebar.checkbox(
-        "⚡ Enable Hyperparameter Tuning",
+        "⚡ Smart Hyperparameter Tuning",
         value=False,
         help="If checked, the AI will try random configurations to find the best one."
     )
