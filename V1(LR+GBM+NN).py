@@ -1448,7 +1448,7 @@ if st.button("Train Model"):
         st.markdown("### 📊 Top Drivers (Permutation = Ground Truth)")
 
         perm_df["Abs_Importance"] = perm_df["Perm_Importance"].abs()
-        plot_df = perm_df.sort_values("Abs_Importance", ascending=False).head(20) \
+        plot_df = perm_df.sort_values("Abs_Importance", ascending=False).head(20)
         plot_df = plot_df.sort_values("Perm_Importance")
 
         fig, ax = plt.subplots(figsize=(10, 6))
