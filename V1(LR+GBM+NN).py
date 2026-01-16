@@ -452,11 +452,6 @@ else:
         st.info("Target is numeric, but no numeric features found for correlation.")
 # ------------------ Model Selection ------------------
 with model_container:
-    compare_models = st.sidebar.checkbox(
-        "🔍 Compare all selected models (Recommended)",
-        value=True,
-        help="If enabled, all selected models are evaluated and the best one is automatically selected."
-    )
 
     # UPDATED: Use 'is_classification' instead of 'is_binary'
     if is_classification:
@@ -481,6 +476,12 @@ with model_container:
     st.sidebar.markdown("---")
 
     st.sidebar.header("⚙️ Optimization Strategy")
+
+    compare_models = st.sidebar.checkbox(
+        "🔍 Compare all selected models (Recommended)",
+        value=True,
+        help="If enabled, all selected models are evaluated and the best one is automatically selected."
+    )
 
     use_custom_params = st.sidebar.checkbox(
         "🛠️ Manually set model hyperparameters",
@@ -565,7 +566,6 @@ with model_container:
             list(INDUSTRY_PRESETS[model_choice].keys())
         )
 
-    st.sidebar.subheader("🎛️ Smart Hyperparameter Exploration")
 
     # --- Enable tuning ---
     enable_tuning = st.sidebar.checkbox(
@@ -1447,13 +1447,20 @@ if st.button("Train Model"):
         # ======================================================
         st.markdown("### 📊 Top Drivers (Permutation = Ground Truth)")
 
-        plot_df = perm_df.sort_values("Perm_Importance")
+        perm_df["Abs_Importance"] = perm_df["Perm_Importance"].abs()
+        plot_df = perm_df.sort_values("Abs_Importance", ascending=False).head(20) \
+        plot_df = plot_df.sort_values("Perm_Importance")
 
         fig, ax = plt.subplots(figsize=(10, 6))
         colors = ["#e53935" if v < 0 else "#4caf50" for v in plot_df["Perm_Importance"]]
+
         ax.barh(plot_df["Feature"], plot_df["Perm_Importance"], color=colors)
-        ax.set_title("Permutation Importance (Performance Impact)")
-        ax.set_xlabel("Performance Change if Feature is Shuffled")
+        ax.set_title(f"Top {len(plot_df)} Features by Importance")
+        ax.set_xlabel("Performance Impact (Left=Harmful, Right=Helpful)")
+
+        # Add a vertical line at 0 for clarity
+        ax.axvline(0, color="black", linewidth=0.8, linestyle="--")
+
         st.pyplot(fig, clear_figure=True)
 
         # ======================================================
