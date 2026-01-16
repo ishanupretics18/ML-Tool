@@ -565,7 +565,8 @@ with model_container:
             list(INDUSTRY_PRESETS[model_choice].keys())
         )
 
-
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("🎛️ Smart Hyperparameter Exploration")
 
     # --- Enable tuning ---
     enable_tuning = st.sidebar.checkbox(
@@ -587,6 +588,7 @@ with model_container:
     else:
         tuning_iter = 10  # Fallback default
 
+st.sidebar.markdown("---")
 #Refit Strategy Checkbox (Defined in Sidebar to prevent app reset)
 refit_strategy = st.sidebar.checkbox(
     "🚀 Retrain on 100% data for predictions",
