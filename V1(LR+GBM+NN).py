@@ -1375,7 +1375,6 @@ if st.button("Train Model"):
 
             if struct_df is not None:
                 # --- 1. NORMALIZE TO 0-100% (Make it Relative) ---
-                # We take the Absolute value so Negative coefficients (in Linear) count as "Influence"
                 total_importance = struct_df["Struct_Importance"].abs().sum()
 
                 if total_importance > 0:
@@ -1383,39 +1382,38 @@ if st.button("Train Model"):
                 else:
                     struct_df["Relative %"] = 0.0
 
-                # --- 2. DISPLAY LOGIC ---
+                # --- 2. CHART FIRST (Visual Summary) ---
                 st.caption(f"Internal method used: **{struct_type}** (Normalized to 100%)")
 
-                # Format for clean display
-                display_df = struct_df.sort_values("Relative %", ascending=False).head(30).copy()
-                display_df["Relative %"] = display_df["Relative %"].map('{:.1f}%'.format)
-
-                # Show the clean table
-                st.dataframe(
-                    display_df[["Feature", "Relative %"]],
-                    use_container_width=True,
-                    hide_index=True
-                )
-
-                # OPTIONAL: Horizontal Bar Chart (Best for long labels)
+                # Plot TOP 30 Only (To keep chart readable)
                 fig_struct, ax_struct = plt.subplots(figsize=(10, 8))
+                plot_data = struct_df.sort_values("Relative %", ascending=True).tail(30)
 
-                # Sort ascending so the biggest bar is at the top when plotted
-                plot_data = struct_df.sort_values("Relative %", ascending=True).tail(20)
-
-                # Create horizontal bars
                 ax_struct.barh(plot_data["Feature"], plot_data["Relative %"], color="#1f77b4")
                 ax_struct.set_xlabel("Relative Influence (%)")
-                ax_struct.set_title("Top 20 Features by Model Weight")
-
-                # Add grid for readability
+                ax_struct.set_title(f"Top {len(plot_data)} Features by Model Weight")
                 ax_struct.grid(axis='x', linestyle='--', alpha=0.5)
 
                 st.pyplot(fig_struct)
                 plt.close(fig_struct)
+
+                # --- 3. SCROLLABLE TABLE (Full Details) ---
+                st.markdown("### 📋 Full Feature Weights")
+
+                # Prepare the FULL table (No limit)
+                display_df = struct_df.sort_values("Relative %", ascending=False).copy()
+                display_df["Relative %"] = display_df["Relative %"].map('{:.1f}%'.format)
+
+                # Streamlit dataframes are scrollable by default
+                st.dataframe(
+                    display_df[["Feature", "Relative %"]],
+                    use_container_width=True,
+                    hide_index=True,
+                    height=300  # Sets a fixed height window with a scrollbar
+                )
+
             else:
                 st.info("This model does not expose native feature importance.")
-
 
         # ======================================================
         # STEP 3️⃣ — DISAGREEMENT & RISK DETECTION ENGINE
