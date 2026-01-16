@@ -98,7 +98,7 @@ NN_PRESETS = {
 }
 
 INDUSTRY_PRESETS = {
-    "Ridge Regression": LINEAR_PRESETS,
+    "Linear Regression": LINEAR_PRESETS,
     "Logistic Regression": LOGISTIC_PRESETS,
     "GBM": GBM_PRESETS,
     "Neural Network": NN_PRESETS
@@ -145,7 +145,7 @@ if file is None:
            </p>
            <p>
                Supported models:
-               <br>• Ridge Regression
+               <br>• Linear Regression
                <br>• Logistic Regression
                <br>• Gradient Boosting
                <br>• Neural Networks
@@ -476,7 +476,7 @@ with model_container:
     else:
         model_choice = st.selectbox(
             "Model",
-            ["Ridge Regression", "GBM", "Neural Network"]
+            ["Linear Regression", "GBM", "Neural Network"]
         )
     st.sidebar.markdown("---")
     st.sidebar.subheader("🛠️ Custom Hyperparameters (Advanced)")
@@ -500,7 +500,7 @@ with model_container:
                 "Max Iterations", 100, 5000, 1000
             )
 
-        elif model_choice == "Ridge Regression":
+        elif model_choice == "Linear Regression":
             custom_params["model__alpha"] = st.sidebar.number_input(
                 "Alpha (Regularization)", 0.001, 100.0, 1.0
             )
@@ -671,7 +671,7 @@ X_train, X_test, y_train, y_test = train_test_split(
 )
 
 # ------------------ Model Init & Params ------------------
-if model_choice == "Ridge Regression":
+if model_choice == "Linear Regression":
     model = Ridge()
     param_dist = {"model__alpha": np.logspace(-2, 2, 10)}
 
@@ -1185,7 +1185,7 @@ if st.button("Train Model"):
         st.markdown("#### 2️⃣ What assumptions are made?")
 
         # --- LOGIC FOR LINEAR MODELS ---
-        if model_choice in ["Ridge Regression", "Logistic Regression"]:
+        if model_choice in ["Linear Regression", "Logistic Regression"]:
             st.write("• **Linearity:** Assumes straight-line relationships.")
 
             # Check Correlation (VIF Proxy)
