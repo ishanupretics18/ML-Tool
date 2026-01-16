@@ -555,7 +555,7 @@ with model_container:
 
 
     use_presets = st.sidebar.checkbox(
-        "🏭 Use Industry Presets",
+        "🏭 Use Industry Presets" +"\u00A0" * 15,
         value=False,
         help="Evaluate proven industry-standard configurations"
     )
