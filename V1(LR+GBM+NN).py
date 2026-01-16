@@ -1387,7 +1387,7 @@ if st.button("Train Model"):
                 st.caption(f"Internal method used: **{struct_type}** (Normalized to 100%)")
 
                 # Format for clean display
-                display_df = struct_df.sort_values("Relative %", ascending=False).head(20).copy()
+                display_df = struct_df.sort_values("Relative %", ascending=False).head(30).copy()
                 display_df["Relative %"] = display_df["Relative %"].map('{:.1f}%'.format)
 
                 # Show the clean table
