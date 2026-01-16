@@ -1397,8 +1397,22 @@ if st.button("Train Model"):
                     hide_index=True
                 )
 
-                # OPTIONAL: Add a bar chart for the Relative %
-                st.bar_chart(data=struct_df.set_index("Feature")["Relative %"].sort_values(ascending=False).head(20))
+                # OPTIONAL: Horizontal Bar Chart (Best for long labels)
+                fig_struct, ax_struct = plt.subplots(figsize=(10, 8))
+
+                # Sort ascending so the biggest bar is at the top when plotted
+                plot_data = struct_df.sort_values("Relative %", ascending=True).tail(20)
+
+                # Create horizontal bars
+                ax_struct.barh(plot_data["Feature"], plot_data["Relative %"], color="#1f77b4")
+                ax_struct.set_xlabel("Relative Influence (%)")
+                ax_struct.set_title("Top 20 Features by Model Weight")
+
+                # Add grid for readability
+                ax_struct.grid(axis='x', linestyle='--', alpha=0.5)
+
+                st.pyplot(fig_struct)
+                plt.close(fig_struct)st.bar_chart(data=struct_df.set_index("Feature")["Relative %"].sort_values(ascending=False).head(30))
 
             else:
                 st.info("This model does not expose native feature importance.")
