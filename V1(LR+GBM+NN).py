@@ -1412,8 +1412,7 @@ if st.button("Train Model"):
                 ax_struct.grid(axis='x', linestyle='--', alpha=0.5)
 
                 st.pyplot(fig_struct)
-                plt.close(fig_struct)st.bar_chart(data=struct_df.set_index("Feature")["Relative %"].sort_values(ascending=False).head(30))
-
+                plt.close(fig_struct)
             else:
                 st.info("This model does not expose native feature importance.")
 
