@@ -1374,13 +1374,35 @@ if st.button("Train Model"):
                 struct_type = "Coefficient Magnitude"
 
             if struct_df is not None:
-                st.caption(f"Internal method used: **{struct_type}**")
+                # --- 1. NORMALIZE TO 0-100% (Make it Relative) ---
+                # We take the Absolute value so Negative coefficients (in Linear) count as "Influence"
+                total_importance = struct_df["Struct_Importance"].abs().sum()
+
+                if total_importance > 0:
+                    struct_df["Relative %"] = (struct_df["Struct_Importance"].abs() / total_importance) * 100
+                else:
+                    struct_df["Relative %"] = 0.0
+
+                # --- 2. DISPLAY LOGIC ---
+                st.caption(f"Internal method used: **{struct_type}** (Normalized to 100%)")
+
+                # Format for clean display
+                display_df = struct_df.sort_values("Relative %", ascending=False).head(20).copy()
+                display_df["Relative %"] = display_df["Relative %"].map('{:.1f}%'.format)
+
+                # Show the clean table
                 st.dataframe(
-                    struct_df.sort_values("Struct_Importance", ascending=False).head(20),
-                    use_container_width=True
+                    display_df[["Feature", "Relative %"]],
+                    use_container_width=True,
+                    hide_index=True
                 )
+
+                # OPTIONAL: Add a bar chart for the Relative %
+                st.bar_chart(data=struct_df.set_index("Feature")["Relative %"].sort_values(ascending=False).head(20))
+
             else:
                 st.info("This model does not expose native feature importance.")
+
 
         # ======================================================
         # STEP 3️⃣ — DISAGREEMENT & RISK DETECTION ENGINE
