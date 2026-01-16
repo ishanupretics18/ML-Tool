@@ -483,7 +483,7 @@ with model_container:
     st.sidebar.header("⚙️ Optimization Strategy")
 
     use_custom_params = st.sidebar.checkbox(
-        "Manually set model hyperparameters",
+        "🛠️ Manually set model hyperparameters",
         value=False,
         help="Use this only if you know what these parameters do. Overrides defaults."
     )
@@ -551,10 +551,10 @@ with model_container:
     else:
         custom_mode = "Best model wins (Recommended)"
 
-    st.sidebar.markdown("---")
+
 
     use_presets = st.sidebar.checkbox(
-        "Use Industry Presets",
+        "🏭 Use Industry Presets",
         value=False,
         help="Evaluate proven industry-standard configurations"
     )
@@ -565,12 +565,11 @@ with model_container:
             list(INDUSTRY_PRESETS[model_choice].keys())
         )
 
-    st.sidebar.markdown("---")
     st.sidebar.subheader("🎛️ Smart Hyperparameter Exploration")
 
     # --- Enable tuning ---
     enable_tuning = st.sidebar.checkbox(
-        "⚡ Smart Hyperparameter Tuning",
+        "🎛️ Smart Hyperparameter Tuning",
         value=False,
         help="If checked, the AI will try random configurations to find the best one."
     )
