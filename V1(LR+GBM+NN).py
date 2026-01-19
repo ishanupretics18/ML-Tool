@@ -1292,9 +1292,7 @@ if st.button("Train Model"):
         else:
             st.info("ℹ️ Confusion-based risk analysis is not applicable for this model.")
 
-    # ======================================
-    # ======================================
-    # FEATURE IMPORTANCE
+
     # ======================================
     st.markdown("---")
     st.subheader("⚖️ Feature Importance & Model Diagnostics")
